@@ -95,6 +95,23 @@ class LiveFeedBridge:
             ctx.verify_mode = ssl.CERT_NONE
         return ctx
 
+    def _http_opener(self):
+        """Return an opener honoring an optional proxy AND --insecure-ssl.
+
+        Without insecure_ssl this verifies certificates (default urllib TLS trust).
+        With --insecure-ssl it accepts a MITM/local-proxy self-signed cert in the
+        chain (needed e.g. behind a corporate or charles/mitmproxy-style proxy).
+        """
+        handlers = []
+        if self.proxy:
+            handlers.append(urllib.request.ProxyHandler(
+                {'http': self.proxy, 'https': self.proxy}))
+        if self.insecure_ssl:
+            # Match ALL external HTTPS (WS + Gamma HTTP) with the same trust policy.
+            handlers.append(urllib.request.HTTPSHandler(
+                context=ssl._create_unverified_context()))
+        return urllib.request.build_opener(*handlers)
+
     async def connect_to_engine(self):
         while self.running:
             try:
@@ -123,9 +140,7 @@ class LiveFeedBridge:
         raw = []
         for url in [GAMMA_MARKETS_URL, GAMMA_CRYPTO_URL]:
             try:
-                op = urllib.request.build_opener()
-                if self.proxy:
-                    op.add_handler(urllib.request.ProxyHandler({'http': self.proxy, 'https': self.proxy}))
+                op = self._http_opener()
                 rq = urllib.request.Request(url, headers={"User-Agent": "PM-Feed/1.0",
                                                           "Accept": "application/json"})
                 with op.open(rq, timeout=10) as r:
@@ -133,7 +148,8 @@ class LiveFeedBridge:
                         data = json.loads(r.read().decode("utf-8"))
                         if isinstance(data, list):
                             raw.extend(data)
-            except Exception:
+            except Exception as e:
+                print(f"[DISCOVERY] warning: Gamma request failed ({e})")
                 continue
         if not raw:
             return []
@@ -210,9 +226,7 @@ class LiveFeedBridge:
             return None
         url = f"https://gamma-api.polymarket.com/markets?condition_id={cid}"
         try:
-            op = urllib.request.build_opener()
-            if self.proxy:
-                op.add_handler(urllib.request.ProxyHandler({'http': self.proxy, 'https': self.proxy}))
+            op = self._http_opener()
             rq = urllib.request.Request(url, headers={"User-Agent": "PM-Feed/1.0",
                                                       "Accept": "application/json"})
             with op.open(rq, timeout=10) as r:

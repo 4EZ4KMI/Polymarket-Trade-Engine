@@ -5,7 +5,8 @@ import { XCircle } from "lucide-react";
 import { Header } from "./components/Header";
 import { MetricCards } from "./components/MetricCards";
 import { OrderBookView, TelemetryView } from "./components/OrderBookView";
-import { EngineStatus, Portfolio, OrderBook, Telemetry } from "./types";
+import { ExecutionAnalyticsView } from "./components/ExecutionAnalyticsView";
+import { EngineStatus, Portfolio, OrderBook, Telemetry, ExecutionAnalytics } from "./types";
 
 const API_BASE = "http://localhost:8080";
 
@@ -14,16 +15,18 @@ export default function DashboardPage() {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [book, setBook] = useState<OrderBook | null>(null);
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
+  const [analytics, setAnalytics] = useState<ExecutionAnalytics | null>(null);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const fetchData = async () => {
     try {
-      const [resStatus, resPort, resBook, resTelem] = await Promise.all([
+      const [resStatus, resPort, resBook, resTelem, resAnalytics] = await Promise.all([
         fetch(`${API_BASE}/api/status`).then((r) => r.json()).catch(() => null),
         fetch(`${API_BASE}/api/portfolio`).then((r) => r.json()).catch(() => null),
         fetch(`${API_BASE}/api/book`).then((r) => r.json()).catch(() => null),
         fetch(`${API_BASE}/api/telemetry`).then((r) => r.json()).catch(() => null),
+        fetch(`${API_BASE}/api/analytics`).then((r) => r.json()).catch(() => null),
       ]);
 
       if (resStatus) {
@@ -31,6 +34,7 @@ export default function DashboardPage() {
         setPortfolio(resPort);
         setBook(resBook);
         setTelemetry(resTelem);
+        setAnalytics(resAnalytics);
         setConnected(true);
       } else {
         setConnected(false);
@@ -85,6 +89,8 @@ export default function DashboardPage() {
       ) : null}
 
       <MetricCards portfolio={portfolio} status={status} telemetry={telemetry} />
+
+      <ExecutionAnalyticsView analytics={analytics} />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <OrderBookView book={book} />

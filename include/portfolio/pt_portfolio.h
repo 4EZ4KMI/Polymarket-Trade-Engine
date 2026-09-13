@@ -49,6 +49,9 @@ double pt_portfolio_equity(const pt_portfolio_t *p);
 double pt_portfolio_win_rate(const pt_portfolio_t *p);
 double pt_portfolio_market_exposure(const pt_portfolio_t *p, pt_market_id_t market_id);
 
+/* Settle all positions for a market at expiry: winning_is_yes = 1 (YES wins @ $1), 0 (NO wins @ $1) */
+void pt_portfolio_settle_market(pt_portfolio_t *p, pt_market_id_t market_id, int winning_is_yes);
+
 #ifdef __cplusplus
 }
 #endif

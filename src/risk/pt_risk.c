@@ -6,6 +6,8 @@ void pt_risk_init(pt_risk_engine_t *r, const pt_risk_cfg_t *cfg)
 {
     memset(r, 0, sizeof(*r));
     if (cfg) r->cfg = *cfg;
+    if (r->cfg.max_orders_per_sec == 0) r->cfg.max_orders_per_sec = 50;
+    if (r->cfg.max_order_size_shares == 0.0) r->cfg.max_order_size_shares = 1000.0;
 }
 
 void pt_risk_feed_touch_poly(pt_risk_engine_t *r, pt_nsec_t now)
@@ -52,14 +54,24 @@ int pt_risk_evaluate_signal(pt_risk_engine_t *r, const pt_signal_t *sig,
         return PT_REJECT_KILL_SWITCH_ACTIVE;
     }
 
-    /* 2. Daily loss */
+    /* 2. Rate limiting (sliding 1s) */
+    if (r->rate_window_start_t == 0 || now >= r->rate_window_start_t + 1000000000ULL) {
+        r->rate_window_start_t = now;
+        r->orders_in_current_sec = 0;
+    }
+    if (r->cfg.max_orders_per_sec > 0 && r->orders_in_current_sec >= r->cfg.max_orders_per_sec) {
+        r->total_rejected++;
+        return PT_REJECT_RATE_LIMIT_EXCEEDED;
+    }
+
+    /* 3. Daily loss */
     if (r->daily_pnl <= -fabs(r->cfg.max_daily_loss)) {
         pt_risk_trip_kill(r, "max_daily_loss_exceeded");
         r->total_rejected++;
         return PT_REJECT_DAILY_LOSS_EXCEEDED;
     }
 
-    /* 3. Max drawdown */
+    /* 4. Max drawdown */
     double dd = r->peak_pnl - r->daily_pnl;
     if (dd >= fabs(r->cfg.max_drawdown)) {
         pt_risk_trip_kill(r, "max_drawdown_exceeded");
@@ -67,7 +79,7 @@ int pt_risk_evaluate_signal(pt_risk_engine_t *r, const pt_signal_t *sig,
         return PT_REJECT_DRAWDOWN_EXCEEDED;
     }
 
-    /* 4. Consecutive losses */
+    /* 5. Consecutive losses */
     if (r->cfg.max_consecutive_losses > 0 &&
         r->consecutive_losses >= r->cfg.max_consecutive_losses) {
         pt_risk_trip_kill(r, "consecutive_losses_exceeded");
@@ -75,7 +87,7 @@ int pt_risk_evaluate_signal(pt_risk_engine_t *r, const pt_signal_t *sig,
         return PT_REJECT_CONSECUTIVE_LOSSES;
     }
 
-    /* 5. Stale feeds */
+    /* 6. Stale feeds */
     if (r->cfg.max_polymarket_stale_ns > 0 && r->last_poly_update_t > 0) {
         if (now > r->last_poly_update_t + r->cfg.max_polymarket_stale_ns) {
             r->total_rejected++;
@@ -89,19 +101,19 @@ int pt_risk_evaluate_signal(pt_risk_engine_t *r, const pt_signal_t *sig,
         }
     }
 
-    /* 6. Spread */
+    /* 7. Spread */
     if (sig->poly_spread > r->cfg.max_spread_for_entry) {
         r->total_rejected++;
         return PT_REJECT_SPREAD_TOO_WIDE;
     }
 
-    /* 7. Confidence floor */
+    /* 8. Confidence floor */
     if (sig->confidence < r->cfg.min_confidence_floor) {
         r->total_rejected++;
         return PT_REJECT_LOW_CONFIDENCE;
     }
 
-    /* 8. Position sizing */
+    /* 9. Position sizing */
     double notional_per_share = (double)sig->target_price / (double)PT_PRICE_SCALE;
     if (notional_per_share <= 0.001) {
         r->total_rejected++;
@@ -122,14 +134,24 @@ int pt_risk_evaluate_signal(pt_risk_engine_t *r, const pt_signal_t *sig,
 
     double min_room = (room_market < room_total) ? room_market : room_total;
     pt_size_t allowed_shares = (pt_size_t)(min_room / notional_per_share);
+    if (r->cfg.max_order_size_shares > 0 && (double)allowed_shares > r->cfg.max_order_size_shares) {
+        allowed_shares = (pt_size_t)r->cfg.max_order_size_shares;
+    }
     if (allowed_shares == 0) {
         r->total_rejected++;
         return PT_REJECT_TOTAL_EXPOSURE_LIMIT;
     }
 
-    *size_approved = (sig->max_size < allowed_shares) ? sig->max_size : allowed_shares;
+    pt_size_t target_sz = (sig->max_size < allowed_shares) ? sig->max_size : allowed_shares;
+    if (r->cfg.max_order_size_shares > 0 && (double)target_sz > r->cfg.max_order_size_shares) {
+        target_sz = (pt_size_t)r->cfg.max_order_size_shares;
+    }
+
+    *size_approved = target_sz;
+    r->orders_in_current_sec++;
     return PT_REJECT_NONE;
 }
+
 
 void pt_risk_on_fill(pt_risk_engine_t *r, double notional_usd)
 {
@@ -159,10 +181,13 @@ const char *pt_risk_reject_str(int reject_code)
     case PT_REJECT_CONSECUTIVE_LOSSES:   return "consecutive_losses_exceeded";
     case PT_REJECT_POSITION_LIMIT:       return "market_position_limit";
     case PT_REJECT_TOTAL_EXPOSURE_LIMIT: return "total_exposure_limit";
+    case PT_REJECT_MAX_ORDER_SIZE:       return "max_order_size_exceeded";
     case PT_REJECT_POLY_FEED_STALE:      return "poly_feed_stale";
     case PT_REJECT_BINANCE_FEED_STALE:   return "binance_feed_stale";
     case PT_REJECT_SPREAD_TOO_WIDE:      return "spread_too_wide";
     case PT_REJECT_LOW_CONFIDENCE:       return "confidence_below_floor";
+    case PT_REJECT_RATE_LIMIT_EXCEEDED:  return "rate_limit_orders_per_sec";
+    case PT_REJECT_LATENCY_TOO_HIGH:     return "latency_threshold_exceeded";
     case PT_REJECT_INVALID_PRICE:        return "invalid_price";
     }
     return "unknown_reject";

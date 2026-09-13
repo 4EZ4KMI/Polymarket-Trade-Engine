@@ -107,3 +107,29 @@ double pt_portfolio_market_exposure(const pt_portfolio_t *p, pt_market_id_t mark
     }
     return exp;
 }
+void pt_portfolio_settle_market(pt_portfolio_t *p, pt_market_id_t market_id, int winning_is_yes)
+{
+    if (!p) return;
+    for (int i = 0; i < p->position_count; i++) {
+        pt_position_t *pos = &p->positions[i];
+        if (pos->market_id == market_id && pos->shares > 0) {
+            double cost = (double)pos->cost_basis_scaled / (double)PT_PRICE_SCALE;
+            double payoff = (pos->is_yes == winning_is_yes) ? (double)pos->shares * 1.0 : 0.0;
+            double pnl = payoff - cost;
+
+            p->cash += payoff;
+            p->total_exposure -= cost;
+            if (p->total_exposure < 0.0) p->total_exposure = 0.0;
+            p->realized_pnl += pnl;
+            p->trades_count++;
+
+            if (pnl >= 0.0) p->wins_count++;
+            else p->losses_count++;
+
+            pos->shares = 0;
+            pos->cost_basis_scaled = 0;
+            pos->unrealized_pnl = 0.0;
+            pos->realized_pnl += pnl;
+        }
+    }
+}

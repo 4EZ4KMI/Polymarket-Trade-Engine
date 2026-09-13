@@ -17,19 +17,20 @@ endif
 BUILD   := build
 LIB     := $(BUILD)/libpmtcore.a
 ENGINE  := $(BUILD)/bin/pmt_engine
+REPLAY  := $(BUILD)/bin/pmt_replay
 
-CORE_SRC := $(filter-out src/main.c,$(wildcard src/core/*.c src/util/*.c src/orderbook/*.c \
+CORE_SRC := $(filter-out src/main.c src/replay/pt_replay.c,$(wildcard src/core/*.c src/util/*.c src/orderbook/*.c \
                     src/features/*.c src/strategies/*.c src/execution/*.c src/risk/*.c \
-                    src/portfolio/*.c src/storage/*.c src/net/*.c \
+                    src/portfolio/*.c src/storage/*.c src/analytics/*.c src/net/*.c \
                     src/telemetry/*.c src/backtest/*.c))
 CORE_OBJ := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(CORE_SRC))
 
 TEST_SRCS := $(filter-out tests/test_harness.c,$(wildcard tests/test_*.c))
 TEST_BINS := $(patsubst tests/test_%.c,$(BUILD)/bin/test_%,$(TEST_SRCS))
 
-.PHONY: all core engine tests run_tests clean format
+.PHONY: all core engine replay tests run_tests clean format
 
-all: core engine tests
+all: core engine replay tests
 
 $(BUILD)/obj/%.o: src/%.c
 	@mkdir -p $(dir $@)
@@ -47,6 +48,14 @@ $(ENGINE): src/main.c $(LIB)
 	@echo "built engine: $@"
 
 engine: $(ENGINE)
+
+$(REPLAY): src/replay/pt_replay.c $(LIB)
+	@mkdir -p $(BUILD)/bin
+	$(CC) $(CFLAGS) $(CPPFLAGS) src/replay/pt_replay.c $(LIB) -o $@ $(LDLIBS)
+	@echo "built replay: $@"
+
+replay: $(REPLAY)
+
 
 $(BUILD)/bin/test_%: tests/test_%.c tests/test_harness.c $(LIB)
 	@mkdir -p $(dir $@)

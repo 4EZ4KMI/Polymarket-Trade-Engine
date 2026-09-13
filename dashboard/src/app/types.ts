@@ -36,3 +36,17 @@ export interface Telemetry {
   latency_e2e_p99_us: number;
   latency_e2e_max_us: number;
 }
+
+export interface ExecutionAnalytics {
+  expected_edge_avg: number;
+  executable_edge_avg: number;
+  realized_edge_avg: number;
+  fill_ratio: number;
+  adverse_selection_bps: number;
+  avg_slippage_bps: number;
+  avg_queue_ahead: number;
+  brier_score: number;
+  calibration_error: number;
+  profit_factor: number;
+  sharpe: number;
+}

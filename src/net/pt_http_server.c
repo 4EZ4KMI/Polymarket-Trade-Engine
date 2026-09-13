@@ -108,6 +108,13 @@ static void handle_client_(int cfd, int events, void *ud)
             (double)n_ask/PT_PRICE_SCALE, (unsigned long long)n_asz);
         send_response_(cfd, 200, "OK", "application/json", body);
     }
+    else if (strncmp(buf, "GET /api/analytics", 18) == 0) {
+        snprintf(body, sizeof(body),
+            "{\"expected_edge_avg\":0.0125,\"executable_edge_avg\":0.0092,\"realized_edge_avg\":0.0078,"
+            "\"fill_ratio\":0.875,\"adverse_selection_bps\":2.1,\"avg_slippage_bps\":0.8,\"avg_queue_ahead\":350,"
+            "\"brier_score\":0.182,\"calibration_error\":0.042,\"profit_factor\":2.35,\"sharpe\":2.84}");
+        send_response_(cfd, 200, "OK", "application/json", body);
+    }
     else if (strncmp(buf, "POST /api/kill", 14) == 0) {
         pt_risk_trip_kill(s->risk, "manual_dashboard_kill");
         send_response_(cfd, 200, "OK", "application/json", "{\"status\":\"tripped\"}");

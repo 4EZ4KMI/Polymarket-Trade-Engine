@@ -11,6 +11,7 @@ extern "C" {
 typedef struct {
     double    max_position_per_market;   /* USD */
     double    max_total_exposure;        /* USD */
+    double    max_order_size_shares;     /* Max single order size */
     double    max_daily_loss;            /* USD */
     double    max_drawdown;              /* USD from peak */
     pt_nsec_t max_polymarket_stale_ns;   /* max allowed time since last poly book update */
@@ -18,6 +19,8 @@ typedef struct {
     double    max_spread_for_entry;      /* prob points */
     int       max_consecutive_losses;    /* halts if exceeded */
     double    min_confidence_floor;      /* signals below this rejected */
+    uint32_t  max_orders_per_sec;        /* rate limiting */
+    double    max_latency_ms;            /* maximum allowed system latency */
 } pt_risk_cfg_t;
 
 typedef enum {
@@ -28,10 +31,13 @@ typedef enum {
     PT_REJECT_CONSECUTIVE_LOSSES,
     PT_REJECT_POSITION_LIMIT,
     PT_REJECT_TOTAL_EXPOSURE_LIMIT,
+    PT_REJECT_MAX_ORDER_SIZE,
     PT_REJECT_POLY_FEED_STALE,
     PT_REJECT_BINANCE_FEED_STALE,
     PT_REJECT_SPREAD_TOO_WIDE,
     PT_REJECT_LOW_CONFIDENCE,
+    PT_REJECT_RATE_LIMIT_EXCEEDED,
+    PT_REJECT_LATENCY_TOO_HIGH,
     PT_REJECT_INVALID_PRICE
 } pt_risk_reject_t;
 
@@ -39,7 +45,8 @@ typedef struct {
     pt_risk_cfg_t  cfg;
     int            kill_switch_tripped;
     const char    *kill_reason;
-    /* state */
+    
+    /* State */
     double         total_exposure;       /* current open exposure USD */
     double         daily_pnl;            /* realized PnL today */
     double         peak_pnl;             /* for drawdown */
@@ -48,6 +55,10 @@ typedef struct {
     pt_nsec_t      last_binance_update_t;
     uint64_t       total_evaluated;
     uint64_t       total_rejected;
+    
+    /* Rate limiting */
+    pt_nsec_t      rate_window_start_t;
+    uint32_t       orders_in_current_sec;
 } pt_risk_engine_t;
 
 void pt_risk_init(pt_risk_engine_t *r, const pt_risk_cfg_t *cfg);

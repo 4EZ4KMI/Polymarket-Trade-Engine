@@ -1,68 +1,124 @@
-# Polymarket HFT Engine (C11 Core + Next.js Dashboard)
+# Polymarket HFT Engine (C11 Core + Python Feed Bridge)
 
-High-frequency quantitative trading engine for Polymarket binary options:
-- **Strategy A: 5-minute BTC Parity Arbitrage** (YES + NO ask-sum mispricing with book-walking & partial fill hedge).
-- **Strategy B: 15-minute BTC Flow Skew** (Binance BTC sub-second momentum + Polymarket order book imbalance).
-- **Hardcoded Paper-Only Default** (`LIVE_TRADING=false` lock guard).
+Production-hardened shadow/simulation trading engine for Polymarket **BTC 5m/15m** binary options.
+**PAPER TRADING ONLY** — the engine refuses to start if `LIVE_TRADING=true` is set.
+
+- **Strategy A — 5-minute BTC Parity Arbitrage** (`PT_STRAT_PARITY5M`): YES + NO ask-sum
+  mispricing with book-walking and partial-fill hedging.
+- **Strategy B — 15-minute BTC Flow Skew** (`PT_STRAT_FLOW15M`): Binance BTC sub-second
+  momentum + Polymarket order-book imbalance.
+- **100% real data, zero synthesis**: the engine starts with empty books; every tick comes
+  from live Binance WS + Polymarket CLOB via the Python bridge. Market identity is the real
+  `condition_id` (internal `market_id` = SHA-256 of it). Resolutions are polled from the
+  Gamma API and only ever report a *verified* winner — never fabricated.
 
 ---
 
 ## Quick Start
 
-### 1. Run Everything (C Engine + Next.js Dashboard)
+```bash
+# 1. Build the C engine + tests
+make          # or: make engine (engine only)
+
+# 2. Run the test suite
+make run_tests
+
+# 3. Run the engine + live feeds (see "Running" below)
+scripts/start_live_collector.sh            # segments of feeds + engine
+# or run each piece manually
+```
+
+---
+
+## Running
+
+### A. Full stack (engine + live feeds) — one command
+```bash
+scripts/start_live_collector.sh
+```
+Builds the core, starts the engine (HTTP API on `:8080`, IPC feed listener on `:9999`),
+and connects the real Binance + Polymarket feed bridge. Feed-bridge CLI args pass through:
+```bash
+scripts/start_live_collector.sh            # auto-discover BTC markets via Gamma
+scripts/start_live_collector.sh --market-id 12345 --yes-token <id> --no-token <id>
+```
+Stop with `Ctrl+C` (cleans up the engine + feeds).
+
+### B. Engine + dashboard together
 ```bash
 ./run.sh
 ```
-- C Engine starts on `http://127.0.0.1:8080`.
-- Next.js Dashboard starts on `http://localhost:3000`.
+Starts the C engine (config `config/engine.ini`, HTTP on `:8080`) plus the Next.js
+dashboard at `http://localhost:3000`. Brings up the same network stack for UI monitoring.
 
-### 2. Run Test Suites
-```bash
-make run_tests
-```
+### C. Manually
 
-### 3. Build C Engine Standalone
+Engine CLI: `pmt_engine [config.ini] [http_port]`
 ```bash
 make engine
-./build/bin/pmt_engine 8080
 
-### 3. Run with 100% Real Live Feeds (Binance WebSocket + Polymarket CLOB)
-```bash
-./scripts/start_live_collector.sh
+# Terminal 1 — C engine (config file + HTTP port 8080, feed IPC on 9999)
+./build/bin/pmt_engine config/engine.ini 8080
+
+# Terminal 2 — real feed bridge (auto-discovers BTC markets)
+python3 scripts/feed_bridge.py
+
+# ...or pin a specific market
+python3 scripts/feed_bridge.py \
+  --market-id 12345 \
+  --yes-token <token_id_yes> --no-token <token_id_no>
 ```
-Or run the engine and live feeder separately:
-```bash
-# Terminal 1: C Engine
-./build/bin/pmt_engine config/engine.ini
 
-# Terminal 2: Live Market Feeder (real Binance trades & Polymarket books)
-python3 scripts/feed_bridge.py --yes-token <token_id_yes> --no-token <token_id_no>
+### Feed bridge options
 ```
-All real incoming ticks are automatically recorded to `data/live_stream.bin` for deterministic historical replay backtesting.
-
+python3 scripts/feed_bridge.py --help
+  --host            engine host          (default 127.0.0.1)
+  --port            engine feed port     (default 9999)
+  --proxy           HTTP(S) proxy URL    (default: system proxy)
+  --yes-token       pin YES  token id
+  --no-token        pin NO   token id
+  --market-id       pin a numeric market id (skip auto-discovery)
+  --condition-id    pin a condition_id   (skip auto-discovery)
+  --insecure-ssl    disable SSL verify (untrusted local proxy)
+```
+Without `--yes-token/--no-token`, the bridge discovers active BTC markets itself via the
+Gamma API and classifies them as `eligible_for_strategy_a` / `eligible_for_strategy_b`.
 
 ---
 
-## Core C Architecture (`include/` and `src/`)
+## Architecture (`src/`)
 
-- `include/core/ptypes.h`: Integer-scaled arithmetic (`PT_PRICE_SCALE = 1000`), nanosecond timers, direction enums.
-- `include/util/pt_ring.h`: Lock-free single-producer / single-consumer ring buffer.
-- `include/util/pt_winbuf.h`: Fixed-capacity rolling window circular buffer for sub-second trade aggregations.
-- `include/orderbook/pt_book.h`: Pure C L2 order book with delta updates, snapshots, depth volume, imbalance, and book-walking average price calculation.
-- `include/features/pt_features.h`: Microprice, L1/L3/L5/L10 imbalance, distance-weighted imbalance, trade-flow ratios, BTC momentum windows (10ms to 10s).
-- `include/execution/pt_arb.h` & `pt_arb_mgr.h`: Arbitrage edge calculator with fee/slippage/latency buffers and state-machine execution manager with partial-fill hedging.
-- `include/strategies/pt_flow_skew.h`: 15-minute BTC Momentum & Polymarket Flow Skew strategy evaluator.
-- `include/risk/pt_risk.h`: Risk Engine tracking position limits, total exposure, daily loss, drawdown, feed staleness, consecutive loss breaker, and emergency kill switch.
-- `include/portfolio/pt_portfolio.h`: Portfolio position tracker, cash, equity, realized/unrealized mark-to-market PnL, win rate.
-- `include/net/pt_reactor.h`: Portable non-blocking reactor (`kqueue` on macOS, `epoll` on Linux).
-- `include/net/pt_http_server.h`: In-process non-blocking HTTP REST server (`/api/status`, `/api/portfolio`, `/api/book`, `/api/telemetry`, `/api/kill`, `/api/resume`).
-- `include/storage/pt_csv_log.h` & `pt_event_log.h`: Append-only CSV audit logs and binary zero-copy mmap event log.
+- `core/pt_market_registry.c` — real discovered markets; `eligible_for_strategy_a/b`,
+  `get_active_5m`/`get_active_15m`, verified-resolution state.
+- `net/pt_feed_parsers.c` — native Polymarket wire parsers: `book` snapshot
+  (`bids[]`/`asks[]`) and `price_changes[]` deltas; Binance trade parsing.
+- `net/pt_feed_bridge.c` — TCP IPC server (port 9999) receiving bridge JSON and routing it
+  into books/btc/registry/risk; writes every tick to `data/live_stream.bin`.
+- `analytics/pt_lifecycle_tracker.c` — signal lifecycle state machine
+  (`PENDING→PARTIAL→ONE_LEG→BOTH_LEGS→HEDGED→SETTLED/CANCELLED/EXPIRED`), carries `signal_id`
+  through fills for settlement attribution.
+- `execution/pt_broker.c` / `pt_sim_queue.c` — internal matching engine with realistic
+  queue simulation (maker/taker fees, fill probability, partial fills).
+- `analytics/pt_adverse_selection.c` — per-fill adverse-selection tracking; returns an
+  availability flag instead of silently defaulting to 0.0.
+- `analytics/pt_strategy_stats.c` — trade-level Sharpe (no fake annualization), win rate,
+  hedge cost recorded from estimated fill price.
+- `risk/pt_risk.c` — pre-trade rejects: position/total limits, daily loss, drawdown,
+  consecutive-loss breaker, feed staleness, emergency kill.
+- `portfolio/pt_portfolio.c` — cash, equity, realized/unrealized PnL, win rate.
+- `net/pt_reactor.c` + `pt_http_server.c` — non-blocking reactor (`kqueue` macOS /
+  `epoll` Linux) + REST API: `/api/status`, `/api/portfolio`, `/api/book`, `/api/telemetry`,
+  `/api/kill`, `/api/resume`.
 
----
+## Outputs
+- `data/strategy_stats.json` — per-strategy signals/fills/win-rate/PNL on shutdown.
+- `data/live_stream.bin` — binary capture of real ticks for replay backtests.
+- `data/logs/` — append-only CSV audit logs (signals, orders, fills, rejections).
+- `build/` — compiled engine, replay binary, and test binaries.
 
 ## Safety & Compliance
-
-- **Hardcoded Paper-Only Default**: The engine validates `LIVE_TRADING=false` on startup and refuses to run with `LIVE_TRADING=true`.
-- **Zero API Key Requirements**: Paper simulation operates out-of-the-box using realistic broker queue simulation.
-- **Emergency Kill Switch**: Accessible via CLI, HTTP API (`POST /api/kill`), or Next.js UI banner button. Automatically tripped on drawdown or feed disconnection.
+- **Paper-only lock**: `LIVE_TRADING=true` aborts startup (`[FATAL SAFETY] ... permanently locked`).
+- **No synthesized market data**: books start empty; only real feed ticks populate them.
+- **No fake resolutions**: winners come only from the Gamma API.
+- Emergency kill via CLI, `POST /api/kill`, or dashboard button.
 ```

@@ -15,7 +15,7 @@ make -j4
 # 2. Start C Engine in background
 echo "[2/3] Launching C HFT Engine on :8080..."
 mkdir -p data/logs
-./build/bin/pmt_engine 8080 &
+./build/bin/pmt_engine config/engine.ini 8080 &
 ENGINE_PID=$!
 
 cleanup() {

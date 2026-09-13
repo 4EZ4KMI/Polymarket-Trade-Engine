@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <math.h>
 
 static volatile int g_running = 1;
 static void sig_handler(int sig) { (void)sig; g_running = 0; }
@@ -42,29 +43,41 @@ typedef struct {
     pt_telemetry_t              *telemetry;
 } engine_fill_ctx_t;
 
-static void on_engine_fill_(pt_order_id_t oid, pt_market_id_t market_id,
-                            int is_yes, int side, pt_size_t filled_shares,
-                            pt_price_t fill_price, int strategy, void *ud)
+static void on_engine_fill_(const pt_order_t *order, pt_size_t filled_shares,
+                            pt_price_t fill_price, void *ud)
 {
     engine_fill_ctx_t *ctx = (engine_fill_ctx_t *)ud;
-    if (!ctx) return;
+    if (!ctx || !order) return;
 
     pt_nsec_t now = pt_clock_mono_ns();
-    double p = (double)fill_price / PT_PRICE_SCALE;
-    double fee = p * (double)filled_shares * 0.001; /* 10 bps fee */
-    pt_strat_stats_record_fill(ctx->stats, strategy, p, filled_shares, 0.5, fee, 0.0, 15.0, 0);
+    double target_p = (double)order->price / PT_PRICE_SCALE;
+    double fill_p = (double)fill_price / PT_PRICE_SCALE;
+    double slippage_bps = (target_p > 0.0) ? (fabs(fill_p - target_p) / target_p * 10000.0) : 0.0;
+    double latency_ms = (order->submit_t > 0 && now >= order->submit_t) ?
+                        (double)(now - order->submit_t) / 1000000.0 : 0.0;
+    double fee = (order->type == PT_OTYPE_LIMIT) ? 0.0 : (fill_p * (double)filled_shares * 0.001);
+    double rebate = 0.0;
+    double adv_bps = ctx->adverse ? ctx->adverse->overall_avg_adv_bps : 0.0;
+
+    if (ctx->stats) {
+        pt_strat_stats_record_fill(ctx->stats, order->strategy, fill_p, filled_shares,
+                                   slippage_bps, fee, rebate, latency_ms, order->queue_ahead_at_submit);
+    }
 
     if (ctx->adverse) {
-        pt_adverse_record_fill(ctx->adverse, now, market_id, strategy, is_yes, side, fill_price, filled_shares);
+        pt_adverse_record_fill(ctx->adverse, now, order->market_id, order->strategy,
+                               order->is_yes, order->side, fill_price, filled_shares);
     }
 
     if (ctx->lifecycle) {
-        pt_lifecycle_on_fill(ctx->lifecycle, oid, filled_shares, fill_price, 0.02, 1.5, fee, 0.0, 0.5, 1.8);
+        pt_lifecycle_on_fill(ctx->lifecycle, order->signal_id, filled_shares, fill_price,
+                             fill_p, latency_ms, fee, rebate, slippage_bps / 100.0, adv_bps);
     }
 
     if (ctx->csv_log) {
-        pt_csv_log_trade(ctx->csv_log, now, oid, market_id,
-                         strategy, is_yes, side, fill_price, filled_shares, fee, 0.0);
+        pt_csv_log_trade(ctx->csv_log, now, order->id, order->market_id,
+                         order->strategy, order->is_yes, order->side, fill_price,
+                         filled_shares, fee, rebate);
     }
 }
 
@@ -163,7 +176,7 @@ int main(int argc, char **argv)
                         &yes_book, &no_book, &btc_engine,
                         &risk_engine, &telemetry, &dataset_writer,
                         &btc_price, &market_reg, &portfolio,
-                        &strat_stats, &adverse_tracker);
+                        &strat_stats, &lc_tracker, &adverse_tracker);
 
     pt_http_server_t http_server;
     if (pt_http_server_init(&http_server, port, &reactor, &portfolio,
@@ -176,6 +189,8 @@ int main(int argc, char **argv)
 
     engine_fill_ctx_t fill_ctx = {
         .stats = &strat_stats,
+        .lifecycle = &lc_tracker,
+        .adverse = &adverse_tracker,
         .csv_log = &csv_log,
         .telemetry = &telemetry
     };

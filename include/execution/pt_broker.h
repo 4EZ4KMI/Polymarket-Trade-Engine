@@ -57,10 +57,8 @@ void pt_broker_on_level_change(pt_broker_t *b, pt_market_id_t market_id,
                               pt_nsec_t now);
 
 /* Broker tick: evaluate resting orders against current book/trades and fire fills */
-typedef void (*pt_broker_fill_cb_t)(pt_order_id_t oid, pt_market_id_t market_id,
-                                    int is_yes, int side, pt_size_t filled_shares,
-                                    pt_price_t fill_price, int strategy,
-                                    void *ud);
+typedef void (*pt_broker_fill_cb_t)(const pt_order_t *order, pt_size_t filled_shares,
+                                    pt_price_t fill_price, void *ud);
 
 int  pt_broker_tick(pt_broker_t *b, pt_market_id_t market_id,
                     const pt_book_t *yes_book, const pt_book_t *no_book,

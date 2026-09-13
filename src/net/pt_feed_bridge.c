@@ -33,6 +33,7 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
                         pt_market_registry_t *registry,
                         pt_portfolio_t *portfolio,
                         pt_strategy_stats_tracker_t *stats,
+                        pt_lifecycle_tracker_t *lifecycle,
                         pt_adverse_tracker_t *adverse)
 {
     if (!b || !reactor) return -1;
@@ -48,6 +49,7 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
     b->registry = registry;
     b->portfolio = portfolio;
     b->stats = stats;
+    b->lifecycle = lifecycle;
     b->adverse = adverse;
     b->client_fd = -1;
 
@@ -214,15 +216,9 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
                 if (m) mid = m->market_id;
             }
             if (mid > 0) {
-                double pnl_before = b->portfolio->realized_pnl;
-                pt_portfolio_settle_market(b->portfolio, mid, res.winning_is_yes);
-                double pnl_diff = b->portfolio->realized_pnl - pnl_before;
-                int is_win = (pnl_diff >= 0) ? 1 : 0;
-                if (b->stats) {
-                    pt_strat_stats_record_settlement(b->stats, PT_STRAT_PARITY5M, is_win, pnl_diff, 100.0, pnl_diff > 0 ? 0.05 : -0.05);
-                }
-                printf("[RESOLUTION] Real market resolved: ID=%llu Winner=%s Price=%.2f SettlePnL=$%.2f\n",
-                       (unsigned long long)mid, res.winning_is_yes ? "YES" : "NO", res.resolution_price, pnl_diff);
+                pt_portfolio_settle_market(b->portfolio, mid, res.winning_is_yes, b->stats, b->lifecycle);
+                printf("[RESOLUTION] Real market resolved: ID=%llu Winner=%s Price=%.2f\n",
+                       (unsigned long long)mid, res.winning_is_yes ? "YES" : "NO", res.resolution_price);
             }
         }
         return;
@@ -255,21 +251,20 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
         if (b->telemetry) b->telemetry->poly_events_total++;
         if (b->risk) pt_risk_feed_touch_poly(b->risk, now);
 
-        int is_yes = 1;
+        int is_yes = 0;
         pt_market_entry_t *m = NULL;
         if (b->registry) {
             m = pt_market_registry_find_by_token(b->registry, pd.asset_id, &is_yes);
             if (!m) {
-                m = pt_market_registry_get_active(b->registry);
-                if (m) {
-                    is_yes = (strstr(pd.asset_id, "yes") || strstr(pd.asset_id, "YES") || pd.asset_id[0] == '1' || pd.asset_id[0] == '\0');
-                }
+                /* STRICT FAIL-CLOSED: Unknown token ID -> DROP EVENT! No guessing, no fallback! */
+                return;
             }
-            if (m && (m->state == PT_MKT_STATE_DISCOVERED || m->state == PT_MKT_STATE_SUBSCRIBING)) {
+            if (m->state == PT_MKT_STATE_DISCOVERED || m->state == PT_MKT_STATE_SUBSCRIBING) {
                 pt_market_registry_on_snapshot(b->registry, m->market_id, now);
             }
         } else {
-            is_yes = (strstr(pd.asset_id, "yes") || strstr(pd.asset_id, "YES") || pd.asset_id[0] == '1' || pd.asset_id[0] == '\0');
+            /* No registry configured -> cannot map token -> DROP EVENT */
+            return;
         }
 
         pt_book_t *target = is_yes ? b->yes_book : b->no_book;

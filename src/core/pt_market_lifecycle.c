@@ -57,7 +57,7 @@ int pt_market_lifecycle_tick(pt_market_info_t *m, double current_btc_price,
         m->state = PT_LIFECYCLE_RESOLVED;
 
         if (portfolio) {
-            pt_portfolio_settle_market(portfolio, m->market_id, m->resolved_winning_outcome);
+            pt_portfolio_settle_market(portfolio, m->market_id, m->resolved_winning_outcome, NULL, NULL);
         }
         return 1; /* Resolved */
     }

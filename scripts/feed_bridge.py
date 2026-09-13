@@ -3,10 +3,13 @@
 Polymarket & Binance Real-Time Market Data Feeder Bridge & Discovery
 -------------------------------------------------------------------
 Streams 100% REAL LIVE MARKET DATA into the C11 HFT Engine:
- 1. Real Polymarket Market Discovery: Queries active BTC markets from Polymarket API
- 2. Real Binance WebSocket (@aggTrade & @bookTicker) -> Sub-second real BTC trades
- 3. Real Polymarket CLOB WebSocket & REST -> Real L2 Order Book updates for YES/NO tokens
-Zero synthetic / random data.
+ 1. Real Polymarket Market Discovery: Queries active BTC markets from Polymarket Gamma API
+    - Strict ISO 8601 timestamp parsing to epoch milliseconds
+    - Real strike extraction / metadata parsing
+    - Zero fake / synthetic fallbacks (if no active market is found, waits and retries)
+ 2. Real Binance WebSocket (@aggTrade) -> Sub-second real BTC trades
+ 3. Real Polymarket CLOB WebSocket -> Real L2 Order Book updates for YES/NO tokens
+ 4. Real Market Resolution & Rotation: Monitors market settlement and rotates to next market
 """
 
 import asyncio
@@ -18,6 +21,7 @@ import ssl
 import re
 import argparse
 import urllib.request
+from datetime import datetime, timezone
 
 try:
     import websockets
@@ -29,7 +33,39 @@ ENGINE_HOST = "127.0.0.1"
 ENGINE_PORT = 9999
 BINANCE_WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
 POLYMARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-GAMMA_API_URL = "https://gamma-api.polymarket.com/markets?active=true&closed=false&tag=bitcoin&limit=20"
+GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets?active=true&closed=false&tag=bitcoin&limit=50"
+GAMMA_CRYPTO_URL = "https://gamma-api.polymarket.com/markets?active=true&closed=false&tag=crypto&limit=50"
+
+def parse_iso_to_epoch_ms(iso_str):
+    if not iso_str or not isinstance(iso_str, str):
+        return None
+    try:
+        clean_str = iso_str.strip()
+        if clean_str.endswith("Z"):
+            clean_str = clean_str[:-1] + "+00:00"
+        dt = datetime.fromisoformat(clean_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1000)
+    except Exception:
+        return None
+
+def extract_strike_price(question, default_strike=0.0):
+    if not question:
+        return default_strike
+    m = re.search(r'(?:above|over|hit|reach|greater than|at or above|at)\s*\$?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]{4,6}(?:\.[0-9]+)?)', question, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1).replace(",", ""))
+        except Exception:
+            pass
+    m2 = re.search(r'\$([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]{4,6}(?:\.[0-9]+)?)', question)
+    if m2:
+        try:
+            return float(m2.group(1).replace(",", ""))
+        except Exception:
+            pass
+    return default_strike
 
 class LiveFeedBridge:
     def __init__(self, host=ENGINE_HOST, port=ENGINE_PORT, proxy=None, yes_token=None, no_token=None):

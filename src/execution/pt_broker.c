@@ -74,16 +74,15 @@ static void on_sim_fill_(pt_order_t *o, pt_size_t fill_qty, pt_price_t fill_pric
                          double adverse_sel, void *ud)
 {
     broker_tick_ctx_t *ctx = (broker_tick_ctx_t *)ud;
-    if (!ctx || !ctx->broker) return;
+    if (!ctx || !ctx->broker || !o) return;
 
     if (ctx->broker->portfolio) {
         pt_portfolio_on_fill(ctx->broker->portfolio, ctx->market_id,
-                             o->is_yes, o->side, fill_qty, fill_price);
+                             o->is_yes, o->side, fill_qty, fill_price, o->strategy);
     }
 
     if (ctx->user_cb) {
-        ctx->user_cb(o->id, ctx->market_id, o->is_yes, o->side,
-                     fill_qty, fill_price, o->strategy, ctx->user_ud);
+        ctx->user_cb(o, fill_qty, fill_price, ctx->user_ud);
     }
 }
 

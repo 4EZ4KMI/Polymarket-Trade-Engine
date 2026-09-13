@@ -33,6 +33,7 @@ typedef struct {
     pt_market_registry_t        *registry;
     pt_portfolio_t              *portfolio;
     pt_strategy_stats_tracker_t *stats;
+    pt_lifecycle_tracker_t      *lifecycle;
     pt_adverse_tracker_t        *adverse;
     uint64_t                     total_poly_events;
     uint64_t                     total_btc_events;
@@ -54,6 +55,7 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
                         pt_market_registry_t *registry,
                         pt_portfolio_t *portfolio,
                         pt_strategy_stats_tracker_t *stats,
+                        pt_lifecycle_tracker_t *lifecycle,
                         pt_adverse_tracker_t *adverse);
 
 void pt_feed_bridge_close(pt_feed_bridge_t *b);

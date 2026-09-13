@@ -47,7 +47,7 @@ typedef struct {
     int            completed;
 } pt_opportunity_record_t;
 
-typedef struct {
+typedef struct pt_lifecycle_tracker_s {
     pt_opportunity_record_t records[PT_LIFECYCLE_MAX_RECORDS];
     uint64_t                count;
     uint64_t                completed_count;

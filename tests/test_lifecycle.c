@@ -28,7 +28,7 @@ PT_T(market_lifecycle_settlement)
     pt_portfolio_init(&p, 1000.0);
 
     /* Buy 100 YES @ 0.45 ($45 cost) */
-    pt_portfolio_on_fill(&p, 101, 1, PT_SIDE_BID, 100, 450);
+    pt_portfolio_on_fill(&p, 101, 1, PT_SIDE_BID, 100, 450, 0);
     PT_ASSERT_NEAR(p.cash, 955.0, 0.001);
 
     /* Tick at expiry with BTC = 88000.0 (> 87500 strike -> YES wins) */
@@ -75,6 +75,12 @@ PT_T(market_registry_lifecycle_discovery_to_resolution)
     pt_market_entry_t *found = pt_market_registry_find_by_token(&reg, "token_no_123", &is_yes);
     PT_ASSERT(found == m);
     PT_ASSERT(is_yes == 0);
+
+    /* 5b. Strict fail-closed: Unknown token returns NULL */
+    int is_yes_unknown = -1;
+    pt_market_entry_t *unrec = pt_market_registry_find_by_token(&reg, "token_completely_unknown", &is_yes_unknown);
+    PT_ASSERT(unrec == NULL);
+    PT_ASSERT(is_yes_unknown == -1);
 
     /* 6. REAL RESOLUTION from oracle outcome */
     int res = pt_market_registry_resolve(&reg, "0xabcdef123456", 101, 1, 88150.0, t0 + 300000000000ULL);

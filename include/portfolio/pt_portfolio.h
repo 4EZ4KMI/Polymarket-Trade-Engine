@@ -8,11 +8,16 @@
 extern "C" {
 #endif
 
+/* Forward declarations */
+typedef struct pt_strategy_stats_tracker_s pt_strategy_stats_tracker_t;
+typedef struct pt_lifecycle_tracker_s pt_lifecycle_tracker_t;
+
 #define PT_PORTFOLIO_MAX_POSITIONS 128
 
 typedef struct {
     pt_market_id_t market_id;
     int            is_yes;
+    int            strategy;            /* PT_STRAT_PARITY5M vs PT_STRAT_FLOW15M */
     pt_size_t      shares;
     int64_t        cost_basis_scaled;   /* total scaled dollars paid */
     pt_price_t     current_bid_price;   /* for unrealized pnl */
@@ -35,10 +40,10 @@ typedef struct {
 
 void pt_portfolio_init(pt_portfolio_t *p, double initial_cash);
 
-/* Record an execution fill. */
+/* Record an execution fill with strategy attribution */
 void pt_portfolio_on_fill(pt_portfolio_t *p, pt_market_id_t market_id,
                           int is_yes, int side, pt_size_t shares,
-                          pt_price_t price_scaled);
+                          pt_price_t price_scaled, int strategy);
 
 /* Update mark-to-market valuations with current bids. */
 void pt_portfolio_mark(pt_portfolio_t *p, pt_market_id_t market_id,
@@ -49,8 +54,10 @@ double pt_portfolio_equity(const pt_portfolio_t *p);
 double pt_portfolio_win_rate(const pt_portfolio_t *p);
 double pt_portfolio_market_exposure(const pt_portfolio_t *p, pt_market_id_t market_id);
 
-/* Settle all positions for a market at expiry: winning_is_yes = 1 (YES wins @ $1), 0 (NO wins @ $1) */
-void pt_portfolio_settle_market(pt_portfolio_t *p, pt_market_id_t market_id, int winning_is_yes);
+/* Settle all positions for a market at expiry: winning_is_yes = 1 (YES wins @ $1), 0 (NO wins @ $1)
+   Isolates settlements by strategy and records outcomes directly to strategy stats and lifecycle */
+void pt_portfolio_settle_market(pt_portfolio_t *p, pt_market_id_t market_id, int winning_is_yes,
+                                pt_strategy_stats_tracker_t *stats, pt_lifecycle_tracker_t *lc);
 
 #ifdef __cplusplus
 }

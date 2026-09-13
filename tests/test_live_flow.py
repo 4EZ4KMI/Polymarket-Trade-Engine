@@ -56,7 +56,12 @@ def run_integration_test():
         s.sendall((json.dumps(btc_trade) + "\n").encode())
         time.sleep(0.1)
 
-        # Step 4: Stream Order Book Snapshots
+        # Step 3b: Send unknown token message and verify it is dropped (no corruption/guessing)
+        unknown_msg = {"event_type": "book", "asset_id": "unknown_asset_token_999", "side": "BID", "price": "0.99", "size": "999999", "timestamp": now_ms}
+        s.sendall((json.dumps(unknown_msg) + "\n").encode())
+        time.sleep(0.1)
+
+        # Step 4: Stream Order Book Snapshots for Registered Real Tokens
         y_bid = {"event_type": "book", "asset_id": "713210455829103859218392", "side": "BID", "price": "0.485", "size": "500", "timestamp": now_ms}
         y_ask = {"event_type": "book", "asset_id": "713210455829103859218392", "side": "ASK", "price": "0.490", "size": "300", "timestamp": now_ms}
         n_bid = {"event_type": "book", "asset_id": "713210455829103859218393", "side": "BID", "price": "0.490", "size": "400", "timestamp": now_ms}
@@ -74,7 +79,7 @@ def run_integration_test():
         assert status["market_slug"] == "btc-up-5m-real", f"Expected btc-up-5m-real, got {status['market_slug']}"
         assert book["yes"]["best_bid"] == 0.485, f"Expected 0.485, got {book}"
         assert book["yes"]["best_ask"] == 0.490, f"Expected 0.490, got {book}"
-        print("[PASS] Live market discovery & book activation verified.")
+        print("[PASS] Live market discovery & book activation verified (unknown token cleanly dropped).")
 
         # Step 5: Send Real Market Resolution Event
         res = {

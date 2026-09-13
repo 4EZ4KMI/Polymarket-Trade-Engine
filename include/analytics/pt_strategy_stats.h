@@ -47,7 +47,7 @@ typedef struct {
     int    strategy;
 } pt_settled_trade_t;
 
-typedef struct {
+typedef struct pt_strategy_stats_tracker_s {
     pt_single_strat_stats_t   strat_a; /* 5m Parity Arbitrage */
     pt_single_strat_stats_t   strat_b; /* 15m Flow Skew */
     pt_settled_trade_t        settled_trades[PT_STATS_MAX_RETURNS];

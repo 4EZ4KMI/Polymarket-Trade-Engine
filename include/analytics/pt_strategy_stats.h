@@ -109,8 +109,9 @@ void pt_strat_stats_record_settlement(pt_strategy_stats_tracker_t *st,
 void pt_strat_stats_record_arb_hedge(pt_strategy_stats_tracker_t *st, double hedge_cost);
 void pt_strat_stats_record_arb_complete(pt_strategy_stats_tracker_t *st);
 
-/* Compute Sharpe ratio from settled returns (returns 0.0 if insufficient data) */
+/* Compute Sharpe ratio from settled returns (trade-level Sharpe ratio; returns 0.0 if insufficient data) */
 double pt_strat_stats_calc_sharpe(const pt_strategy_stats_tracker_t *st, int *has_enough_data);
+double pt_strat_stats_calc_sharpe_strat(const pt_strategy_stats_tracker_t *st, int strategy, int *has_enough_data);
 
 /* Save and load cumulative statistics to disk (JSON) */
 int  pt_strat_stats_save(const pt_strategy_stats_tracker_t *st, const char *path);

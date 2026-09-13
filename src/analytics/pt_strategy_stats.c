@@ -146,7 +146,7 @@ void pt_strat_stats_record_settlement(pt_strategy_stats_tracker_t *st,
     }
 }
 
-double pt_strat_stats_calc_sharpe(const pt_strategy_stats_tracker_t *st, int *has_enough_data)
+double pt_strat_stats_calc_sharpe_strat(const pt_strategy_stats_tracker_t *st, int strategy, int *has_enough_data)
 {
     if (has_enough_data) *has_enough_data = 0;
     if (!st || st->settled_trades_count < 5) {
@@ -154,17 +154,24 @@ double pt_strat_stats_calc_sharpe(const pt_strategy_stats_tracker_t *st, int *ha
     }
 
     double sum = 0.0;
+    size_t count = 0;
     for (size_t i = 0; i < st->settled_trades_count; i++) {
-        sum += st->settled_trades[i].return_pct;
+        if (strategy < 0 || st->settled_trades[i].strategy == strategy) {
+            sum += st->settled_trades[i].return_pct;
+            count++;
+        }
     }
-    double mean = sum / (double)st->settled_trades_count;
+    if (count < 5) return 0.0;
 
+    double mean = sum / (double)count;
     double sq_diff_sum = 0.0;
     for (size_t i = 0; i < st->settled_trades_count; i++) {
-        double d = st->settled_trades[i].return_pct - mean;
-        sq_diff_sum += d * d;
+        if (strategy < 0 || st->settled_trades[i].strategy == strategy) {
+            double d = st->settled_trades[i].return_pct - mean;
+            sq_diff_sum += d * d;
+        }
     }
-    double variance = sq_diff_sum / (double)(st->settled_trades_count - 1);
+    double variance = sq_diff_sum / (double)(count - 1);
     double stddev = sqrt(variance);
 
     if (stddev < 1e-9) {
@@ -172,8 +179,13 @@ double pt_strat_stats_calc_sharpe(const pt_strategy_stats_tracker_t *st, int *ha
     }
 
     if (has_enough_data) *has_enough_data = 1;
-    double annual_factor = sqrt(105120.0);
-    return (mean / stddev) * annual_factor;
+    /* Trade-level Sharpe ratio: mean trade return over sample standard deviation */
+    return (mean / stddev);
+}
+
+double pt_strat_stats_calc_sharpe(const pt_strategy_stats_tracker_t *st, int *has_enough_data)
+{
+    return pt_strat_stats_calc_sharpe_strat(st, -1, has_enough_data);
 }
 
 int pt_strat_stats_save(const pt_strategy_stats_tracker_t *st, const char *path)

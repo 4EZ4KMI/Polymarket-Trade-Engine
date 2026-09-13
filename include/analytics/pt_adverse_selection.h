@@ -72,6 +72,7 @@ void pt_adverse_tracker_on_price(pt_adverse_tracker_t *t,
 
 /* Get measured adverse selection in bps for a specific fill ID at the highest mature horizon */
 double pt_adverse_get_fill_bps(const pt_adverse_tracker_t *t, uint64_t fill_id);
+int    pt_adverse_get_fill_bps_ex(const pt_adverse_tracker_t *t, uint64_t fill_id, double *out_bps);
 
 #ifdef __cplusplus
 }

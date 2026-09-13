@@ -119,9 +119,9 @@ void pt_adverse_tracker_on_price(pt_adverse_tracker_t *t,
     }
 }
 
-double pt_adverse_get_fill_bps(const pt_adverse_tracker_t *t, uint64_t fill_id)
+int pt_adverse_get_fill_bps_ex(const pt_adverse_tracker_t *t, uint64_t fill_id, double *out_bps)
 {
-    if (!t || fill_id == 0) return 0.0;
+    if (!t || fill_id == 0 || !out_bps) return 0;
 
     for (size_t i = 0; i < t->count; i++) {
         const pt_adverse_record_t *r = &t->records[i];
@@ -129,11 +129,21 @@ double pt_adverse_get_fill_bps(const pt_adverse_tracker_t *t, uint64_t fill_id)
             /* Return movement at highest measured horizon */
             for (int h = PT_ADV_HORIZONS - 1; h >= 0; h--) {
                 if (r->horizon_measured[h]) {
-                    return r->movement_bps[h];
+                    *out_bps = r->movement_bps[h];
+                    return 1;
                 }
             }
-            return 0.0; /* Not yet matured to 10ms */
+            return 0; /* Not yet matured to 10ms */
         }
+    }
+    return 0;
+}
+
+double pt_adverse_get_fill_bps(const pt_adverse_tracker_t *t, uint64_t fill_id)
+{
+    double bps = 0.0;
+    if (pt_adverse_get_fill_bps_ex(t, fill_id, &bps)) {
+        return bps;
     }
     return 0.0;
 }

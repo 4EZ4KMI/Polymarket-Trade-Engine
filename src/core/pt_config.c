@@ -13,6 +13,9 @@ void pt_config_set_defaults(pt_engine_config_t *cfg)
     strncpy(cfg->log_dir, "data/logs", sizeof(cfg->log_dir) - 1);
     cfg->mode = PT_MODE_PAPER;
     cfg->initial_capital = 10000.0;
+    cfg->feed_port = 9999;
+    strncpy(cfg->dataset_path, "data/live_stream.bin", sizeof(cfg->dataset_path) - 1);
+
 
     /* Execution & Queue */
     cfg->execution.latency_submit_ack_ms = 1.5;
@@ -98,6 +101,8 @@ int pt_config_load_file(pt_engine_config_t *cfg, const char *path)
         char *val = trim_(eq + 1);
 
         if (strcmp(key, "http_port") == 0) cfg->http_port = atoi(val);
+        else if (strcmp(key, "feed_port") == 0) cfg->feed_port = atoi(val);
+        else if (strcmp(key, "dataset_path") == 0) strncpy(cfg->dataset_path, val, sizeof(cfg->dataset_path) - 1);
         else if (strcmp(key, "initial_capital") == 0) cfg->initial_capital = atof(val);
         else if (strcmp(key, "max_daily_loss") == 0) cfg->risk.max_daily_loss = atof(val);
         else if (strcmp(key, "max_drawdown") == 0) cfg->risk.max_drawdown = atof(val);

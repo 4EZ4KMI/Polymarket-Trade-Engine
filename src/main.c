@@ -19,6 +19,9 @@
 #include "telemetry/pt_telemetry.h"
 #include "net/pt_reactor.h"
 #include "net/pt_http_server.h"
+#include "net/pt_feed_bridge.h"
+#include "storage/pt_dataset.h"
+
 
 #include <signal.h>
 #include <stdio.h>
@@ -119,6 +122,15 @@ int main(int argc, char **argv)
     pt_csv_logger_t csv_log;
     pt_csv_init(&csv_log, config.log_dir);
 
+    pt_dataset_writer_t dataset_writer;
+    pt_dataset_writer_open(&dataset_writer, config.dataset_path);
+
+    pt_feed_bridge_t feed_bridge;
+    pt_feed_bridge_init(&feed_bridge, &reactor, config.feed_port,
+                        &yes_book, &no_book, &btc_engine,
+                        &risk_engine, &telemetry, &dataset_writer,
+                        &btc_price);
+
     pt_http_server_t http_server;
     if (pt_http_server_init(&http_server, port, &reactor, &portfolio,
                             &telemetry, &risk_engine, &yes_book,
@@ -128,37 +140,16 @@ int main(int argc, char **argv)
     uint64_t tick_count = 0;
     pt_nsec_t last_stat_print = pt_clock_mono_ns();
 
+    printf("[ENGINE] Core online. Awaiting 100%% real market feeds via feed bridge...\n");
+
     while (g_running) {
         pt_nsec_t t0 = pt_clock_mono_ns();
-        pt_risk_feed_touch_poly(&risk_engine, t0);
-        pt_risk_feed_touch_binance(&risk_engine, t0);
 
-        pt_reactor_poll(&reactor, 10);
+        /* Poll non-blocking network I/O (Feeds, HTTP REST) */
+        pt_reactor_poll(&reactor, 5);
 
         tick_count++;
-        telemetry.poly_events_total++;
-        telemetry.btc_events_total++;
-
-        double btc_delta = (((rand() % 100) - 50) / 10.0);
-        btc_price += btc_delta;
-        pt_btc_add(&btc_engine, t0, btc_price);
         pt_http_server_update_btc(&http_server, btc_price);
-
-        if (tick_count % 50 == 0) {
-            pt_level_t y_arb[1] = { {480, 150} };
-            pt_level_t n_arb[1] = { {490, 150} };
-            pt_book_snapshot(&yes_book, PT_SIDE_ASK, y_arb, 1, tick_count);
-            pt_book_snapshot(&no_book, PT_SIDE_ASK, n_arb, 1, tick_count);
-        } else if (tick_count % 50 == 5) {
-            pt_level_t y_norm[2] = { {495, 250}, {500, 400} };
-            pt_level_t n_norm[2] = { {500, 300}, {505, 500} };
-            pt_book_snapshot(&yes_book, PT_SIDE_ASK, y_norm, 2, tick_count);
-            pt_book_snapshot(&no_book, PT_SIDE_ASK, n_norm, 2, tick_count);
-        }
-
-        if (tick_count % 35 == 0) {
-            pt_broker_on_trade(&broker, 101, 1, 480, 100, PT_SIDE_ASK, t0);
-        }
 
         pt_market_lifecycle_tick(&market_info, btc_price, t0, &portfolio);
         int can_trade = pt_market_can_trade(&market_info, t0);
@@ -169,6 +160,7 @@ int main(int argc, char **argv)
         pt_btc_window_t btc_win[PT_BTC_NTF];
         double last_btc = 0; int have_btc = 0;
         pt_btc_snapshot(&btc_engine, t0, btc_win, &last_btc, &have_btc);
+
 
         pt_arb_opp_t arb_opp;
         if (can_trade && pt_arb_calc(&yes_book, &no_book, &config.strategy_arb, 200, &arb_opp) &&
@@ -290,6 +282,9 @@ int main(int argc, char **argv)
     }
 
     printf("\n[ENGINE] Shutting down...\n");
+    pt_feed_bridge_close(&feed_bridge);
+    pt_dataset_writer_close(&dataset_writer);
+
     pt_http_server_stop(&http_server);
     pt_reactor_destroy(&reactor);
     pt_btc_destroy(&btc_engine);

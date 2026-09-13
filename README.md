@@ -26,6 +26,21 @@ make run_tests
 make engine
 ./build/bin/pmt_engine 8080
 
+### 3. Run with 100% Real Live Feeds (Binance WebSocket + Polymarket CLOB)
+```bash
+./scripts/start_live_collector.sh
+```
+Or run the engine and live feeder separately:
+```bash
+# Terminal 1: C Engine
+./build/bin/pmt_engine config/engine.ini
+
+# Terminal 2: Live Market Feeder (real Binance trades & Polymarket books)
+python3 scripts/feed_bridge.py --yes-token <token_id_yes> --no-token <token_id_no>
+```
+All real incoming ticks are automatically recorded to `data/live_stream.bin` for deterministic historical replay backtesting.
+
+
 ---
 
 ## Core C Architecture (`include/` and `src/`)

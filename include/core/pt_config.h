@@ -15,6 +15,9 @@ extern "C" {
 typedef struct {
     int               http_port;
     char              log_dir[128];
+    int               feed_port;
+    char              dataset_path[128];
+
     pt_mode_t         mode;
     double            initial_capital;
     

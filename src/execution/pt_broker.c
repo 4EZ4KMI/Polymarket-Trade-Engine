@@ -74,8 +74,8 @@ static void on_sim_fill_(pt_order_t *o, pt_size_t fill_qty, pt_price_t fill_pric
     if (!ctx || !ctx->broker || !o) return;
 
     if (ctx->broker->portfolio) {
-        pt_portfolio_on_fill(ctx->broker->portfolio, ctx->market_id,
-                             o->is_yes, o->side, fill_qty, fill_price, o->strategy);
+        pt_portfolio_on_fill_ex(ctx->broker->portfolio, ctx->market_id,
+                                o->is_yes, o->side, fill_qty, fill_price, o->strategy, o->signal_id);
     }
 
     if (ctx->user_cb) {

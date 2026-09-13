@@ -3,6 +3,7 @@
 
 #include "core/ptypes.h"
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,11 +19,13 @@ typedef struct {
     pt_market_id_t market_id;
     int            is_yes;
     int            strategy;            /* PT_STRAT_PARITY5M vs PT_STRAT_FLOW15M */
+    uint64_t       signal_id;           /* Exact opportunity signal attribution */
     pt_size_t      shares;
     int64_t        cost_basis_scaled;   /* total scaled dollars paid */
     pt_price_t     current_bid_price;   /* for unrealized pnl */
     double         unrealized_pnl;
     double         realized_pnl;
+    int            is_settled;          /* 1 if position has been settled */
 } pt_position_t;
 
 typedef struct {
@@ -44,6 +47,11 @@ void pt_portfolio_init(pt_portfolio_t *p, double initial_cash);
 void pt_portfolio_on_fill(pt_portfolio_t *p, pt_market_id_t market_id,
                           int is_yes, int side, pt_size_t shares,
                           pt_price_t price_scaled, int strategy);
+
+void pt_portfolio_on_fill_ex(pt_portfolio_t *p, pt_market_id_t market_id,
+                             int is_yes, int side, pt_size_t shares,
+                             pt_price_t price_scaled, int strategy,
+                             uint64_t signal_id);
 
 /* Update mark-to-market valuations with current bids. */
 void pt_portfolio_mark(pt_portfolio_t *p, pt_market_id_t market_id,

@@ -11,12 +11,14 @@ void pt_portfolio_init(pt_portfolio_t *p, double initial_cash)
     p->cash         = initial_cash;
 }
 
-static pt_position_t *find_pos_(pt_portfolio_t *p, pt_market_id_t m, int is_yes, int strategy)
+static pt_position_t *find_pos_(pt_portfolio_t *p, pt_market_id_t m, int is_yes, int strategy, uint64_t signal_id)
 {
     for (int i = 0; i < p->position_count; i++) {
         if (p->positions[i].market_id == m &&
             p->positions[i].is_yes == is_yes &&
-            p->positions[i].strategy == strategy)
+            p->positions[i].strategy == strategy &&
+            !p->positions[i].is_settled &&
+            (signal_id == 0 || p->positions[i].signal_id == 0 || p->positions[i].signal_id == signal_id))
             return &p->positions[i];
     }
     if (p->position_count < PT_PORTFOLIO_MAX_POSITIONS) {
@@ -25,18 +27,23 @@ static pt_position_t *find_pos_(pt_portfolio_t *p, pt_market_id_t m, int is_yes,
         pos->market_id = m;
         pos->is_yes = is_yes;
         pos->strategy = strategy;
+        pos->signal_id = signal_id;
         return pos;
     }
     return NULL;
 }
 
-void pt_portfolio_on_fill(pt_portfolio_t *p, pt_market_id_t market_id,
-                          int is_yes, int side, pt_size_t shares,
-                          pt_price_t price_scaled, int strategy)
+void pt_portfolio_on_fill_ex(pt_portfolio_t *p, pt_market_id_t market_id,
+                             int is_yes, int side, pt_size_t shares,
+                             pt_price_t price_scaled, int strategy,
+                             uint64_t signal_id)
 {
     if (p == NULL || shares == 0) return;
-    pt_position_t *pos = find_pos_(p, market_id, is_yes, strategy);
+    pt_position_t *pos = find_pos_(p, market_id, is_yes, strategy, signal_id);
     if (!pos) return;
+    if (signal_id > 0 && pos->signal_id == 0) {
+        pos->signal_id = signal_id;
+    }
 
     double cost_usd = (double)shares * (double)price_scaled / (double)PT_PRICE_SCALE;
 
@@ -67,6 +74,13 @@ void pt_portfolio_on_fill(pt_portfolio_t *p, pt_market_id_t market_id,
             if (p->total_exposure < 0.0) p->total_exposure = 0.0;
         }
     }
+}
+
+void pt_portfolio_on_fill(pt_portfolio_t *p, pt_market_id_t market_id,
+                          int is_yes, int side, pt_size_t shares,
+                          pt_price_t price_scaled, int strategy)
+{
+    pt_portfolio_on_fill_ex(p, market_id, is_yes, side, shares, price_scaled, strategy, 0);
 }
 
 void pt_portfolio_mark(pt_portfolio_t *p, pt_market_id_t market_id,
@@ -120,7 +134,7 @@ void pt_portfolio_settle_market(pt_portfolio_t *p, pt_market_id_t market_id, int
     if (!p) return;
     for (int i = 0; i < p->position_count; i++) {
         pt_position_t *pos = &p->positions[i];
-        if (pos->market_id == market_id && pos->shares > 0) {
+        if (pos->market_id == market_id && pos->shares > 0 && !pos->is_settled) {
             double cost = (double)pos->cost_basis_scaled / (double)PT_PRICE_SCALE;
             double payoff = (pos->is_yes == winning_is_yes) ? (double)pos->shares * 1.0 : 0.0;
             double pnl = payoff - cost;
@@ -140,7 +154,11 @@ void pt_portfolio_settle_market(pt_portfolio_t *p, pt_market_id_t market_id, int
                 pt_strat_stats_record_settlement(stats, pos->strategy, is_win, pnl, cost, return_pct);
             }
             if (lc) {
-                pt_lifecycle_on_complete(lc, (uint64_t)pos->market_id, pnl, 0.0, return_pct);
+                if (pos->signal_id > 0) {
+                    pt_lifecycle_on_complete(lc, pos->signal_id, pnl, 0.0, return_pct);
+                } else {
+                    pt_lifecycle_on_complete_by_market(lc, pos->market_id, pos->strategy, pnl, 0.0, return_pct);
+                }
             }
 
             printf("[SETTLEMENT] Strategy %s settled on Market %llu: pos=%s winner=%s shares=%llu cost=$%.2f payoff=$%.2f PnL=$%.2f (%s)\n",
@@ -155,6 +173,7 @@ void pt_portfolio_settle_market(pt_portfolio_t *p, pt_market_id_t market_id, int
             pos->cost_basis_scaled = 0;
             pos->unrealized_pnl = 0.0;
             pos->realized_pnl += pnl;
+            pos->is_settled = 1;
         }
     }
 }

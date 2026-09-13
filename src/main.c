@@ -71,8 +71,9 @@ static void on_engine_fill_(const pt_order_t *order, pt_size_t filled_shares,
     }
 
     if (ctx->lifecycle) {
-        pt_lifecycle_on_fill(ctx->lifecycle, order->signal_id, filled_shares, fill_price,
-                             fill_p, latency_ms, fee, rebate, slippage_bps / 100.0, fill_id);
+        pt_lifecycle_on_fill_ex(ctx->lifecycle, order->signal_id, order->id, order->is_yes,
+                                filled_shares, fill_price, fill_p, latency_ms, fee, rebate,
+                                slippage_bps / 100.0, fill_id);
     }
 
     if (ctx->csv_log) {
@@ -212,6 +213,11 @@ int main(int argc, char **argv)
         pt_http_server_update_btc(&http_server, btc_price);
 
         pt_market_entry_t *act_m = pt_market_registry_get_active(&market_reg);
+        pt_market_entry_t *act_m_5m = pt_market_registry_get_active_5m(&market_reg);
+        pt_market_entry_t *act_m_15m = pt_market_registry_get_active_15m(&market_reg);
+        if (!act_m_5m) act_m_5m = act_m;
+        if (!act_m_15m) act_m_15m = act_m;
+
         int has_books = (yes_book.bids.count > 0 && yes_book.asks.count > 0 &&
                          no_book.bids.count > 0 && no_book.asks.count > 0);
 
@@ -219,25 +225,30 @@ int main(int argc, char **argv)
         double last_btc = 0; int have_btc = 0;
         pt_btc_snapshot(&btc_engine, t0, btc_win, &last_btc, &have_btc);
 
-        int can_trade = (act_m != NULL && has_books && have_btc && btc_price > 0.0 &&
-                         pt_market_entry_can_trade(act_m, t0));
-        double tte = act_m ? pt_market_entry_time_to_expiry_sec(act_m, t0) : 0.0;
-        pt_market_id_t active_mid = act_m ? act_m->market_id : 0;
+        int can_trade_a = (act_m_5m != NULL && act_m_5m->eligible_for_strategy_a && has_books && have_btc && btc_price > 0.0 &&
+                           pt_market_entry_can_trade(act_m_5m, t0));
+        double tte_a = act_m_5m ? pt_market_entry_time_to_expiry_sec(act_m_5m, t0) : 0.0;
+        pt_market_id_t active_mid_a = act_m_5m ? act_m_5m->market_id : 0;
+
+        int can_trade_b = (act_m_15m != NULL && act_m_15m->eligible_for_strategy_b && has_books && have_btc && btc_price > 0.0 &&
+                           pt_market_entry_can_trade(act_m_15m, t0));
+        double tte_b = act_m_15m ? pt_market_entry_time_to_expiry_sec(act_m_15m, t0) : 0.0;
+        pt_market_id_t active_mid_b = act_m_15m ? act_m_15m->market_id : 0;
 
         if (has_books) {
             pt_book_features_compute(&yes_book, &yes_feat.book);
             pt_book_features_compute(&no_book, &no_feat.book);
         }
 
-        /* Strategy A: 5m Parity Arbitrage */
+        /* Strategy A: 5m Parity Arbitrage (Strictly on 5m BTC markets) */
         pt_arb_opp_t arb_opp;
-        if (can_trade && pt_arb_calc(&yes_book, &no_book, &config.strategy_arb, 200, &arb_opp) &&
+        if (can_trade_a && pt_arb_calc(&yes_book, &no_book, &config.strategy_arb, 200, &arb_opp) &&
             arb_opp.has_opportunity) {
             uint64_t sig_id = tick_count * 10 + 1;
             pt_signal_t sig = {
                 .signal_id = sig_id,
                 .strategy  = PT_STRAT_PARITY5M,
-                .market_id = active_mid,
+                .market_id = active_mid_a,
                 .timestamp = t0,
                 .direction = PT_DIR_BUY,
                 .is_yes    = 1,
@@ -247,19 +258,19 @@ int main(int argc, char **argv)
                 .confidence = arb_opp.confidence,
                 .fill_probability = arb_opp.joint_fill_probability,
                 .max_size = arb_opp.max_executable_size,
-                .time_to_expiry = tte,
+                .time_to_expiry = tte_a,
                 .poly_spread = yes_feat.book.spread
             };
             telemetry.signals_generated++;
             pt_csv_log_signal(&csv_log, &sig);
 
-            pt_lifecycle_on_signal(&lc_tracker, sig_id, t0, active_mid, PT_STRAT_PARITY5M,
+            pt_lifecycle_on_signal(&lc_tracker, sig_id, t0, active_mid_a, PT_STRAT_PARITY5M,
                                    1, PT_SIDE_BID, arb_opp.raw_edge, arb_opp.executable_edge,
                                    arb_opp.net_edge, arb_opp.joint_fill_probability,
                                    arb_opp.max_executable_size, arb_opp.expected_net_profit);
 
             pt_size_t approved = 0;
-            double exp = pt_portfolio_market_exposure(&portfolio, active_mid);
+            double exp = pt_portfolio_market_exposure(&portfolio, active_mid_a);
             int rej = pt_risk_evaluate_signal(&risk_engine, &sig, exp, t0, &approved);
             int is_approved = (rej == PT_REJECT_NONE && approved > 0);
             pt_strat_stats_record_signal(&strat_stats, PT_STRAT_PARITY5M, is_approved, 1, arb_opp.net_edge, arb_opp.executable_edge);
@@ -268,12 +279,12 @@ int main(int argc, char **argv)
                 pt_arb_op_t op;
                 int op_idx = pt_arb_mgr_open(&arb_mgr, &arb_opp, &op, 0, t0);
                 if (op_idx >= 0) {
-                    pt_order_id_t y_oid = pt_broker_submit_ex(&broker, active_mid, 1, PT_SIDE_BID,
+                    pt_order_id_t y_oid = pt_broker_submit_ex(&broker, active_mid_a, 1, PT_SIDE_BID,
                                                               PT_OTYPE_LIMIT,
                                                               (pt_price_t)arb_opp.avg_yes_scaled,
                                                               approved, &yes_book,
                                                               PT_STRAT_PARITY5M, sig_id, t0);
-                    pt_order_id_t n_oid = pt_broker_submit_ex(&broker, active_mid, 0, PT_SIDE_BID,
+                    pt_order_id_t n_oid = pt_broker_submit_ex(&broker, active_mid_a, 0, PT_SIDE_BID,
                                                               PT_OTYPE_LIMIT,
                                                               (pt_price_t)arb_opp.avg_no_scaled,
                                                               approved, &no_book,
@@ -289,17 +300,17 @@ int main(int argc, char **argv)
                 pt_csv_log_rejection(&csv_log, t0, sig.signal_id, pt_risk_reject_str(rej), (double)rej);
             }
         }
-        /* Strategy B: 15m Flow Skew */
+        /* Strategy B: 15m Flow Skew (Strictly on 15m BTC markets) */
         pt_flow_signal_t skew_sig;
-        if (can_trade && have_btc &&
+        if (can_trade_b && have_btc &&
             pt_flow_skew_eval(&config.strategy_flow, &yes_feat, &no_feat, btc_win,
-                              btc_price, tte, &skew_sig) &&
+                              btc_price, tte_b, &skew_sig) &&
             skew_sig.has_signal) {
             uint64_t sig_id = tick_count * 10 + 2;
             pt_signal_t sig = {
                 .signal_id = sig_id,
                 .strategy  = PT_STRAT_FLOW15M,
-                .market_id = active_mid,
+                .market_id = active_mid_b,
                 .timestamp = t0,
                 .direction = skew_sig.dir,
                 .is_yes    = skew_sig.is_yes,
@@ -309,7 +320,7 @@ int main(int argc, char **argv)
                 .confidence = skew_sig.confidence,
                 .fill_probability = skew_sig.fill_probability,
                 .max_size = skew_sig.max_size,
-                .time_to_expiry = tte,
+                .time_to_expiry = tte_b,
                 .poly_spread = skew_sig.features.spread,
                 .poly_imb_l3 = skew_sig.features.imb_l3,
                 .btc_mom_1s  = skew_sig.features.btc_ret_1s
@@ -317,21 +328,21 @@ int main(int argc, char **argv)
             telemetry.signals_generated++;
             pt_csv_log_signal(&csv_log, &sig);
 
-            pt_lifecycle_on_signal(&lc_tracker, sig_id, t0, active_mid, PT_STRAT_FLOW15M,
+            pt_lifecycle_on_signal(&lc_tracker, sig_id, t0, active_mid_b, PT_STRAT_FLOW15M,
                                    skew_sig.is_yes, (skew_sig.dir == PT_DIR_BUY ? PT_SIDE_BID : PT_SIDE_ASK),
                                    skew_sig.raw_edge, skew_sig.executable_edge,
                                    skew_sig.executable_edge, skew_sig.fill_probability,
                                    skew_sig.max_size, skew_sig.expected_profit);
 
             pt_size_t approved = 0;
-            double exp = pt_portfolio_market_exposure(&portfolio, active_mid);
+            double exp = pt_portfolio_market_exposure(&portfolio, active_mid_b);
             int rej = pt_risk_evaluate_signal(&risk_engine, &sig, exp, t0, &approved);
             int is_approved = (rej == PT_REJECT_NONE && approved > 0);
             pt_strat_stats_record_signal(&strat_stats, PT_STRAT_FLOW15M, is_approved, 1, skew_sig.raw_edge, skew_sig.executable_edge);
 
             if (is_approved) {
                 const pt_book_t *tgt_bk = sig.is_yes ? &yes_book : &no_book;
-                pt_order_id_t b_oid = pt_broker_submit_ex(&broker, active_mid, sig.is_yes, PT_SIDE_BID,
+                pt_order_id_t b_oid = pt_broker_submit_ex(&broker, active_mid_b, sig.is_yes, PT_SIDE_BID,
                                                           PT_OTYPE_LIMIT,
                                                           sig.target_price, approved,
                                                           tgt_bk,
@@ -343,8 +354,9 @@ int main(int argc, char **argv)
         }
 
         /* Broker tick evaluates matching engine queues with realistic fills */
-        if (active_mid > 0) {
-            int fills = pt_broker_tick(&broker, active_mid, &yes_book, &no_book, t0, on_engine_fill_, &fill_ctx);
+        pt_market_id_t tick_mid = active_mid_a ? active_mid_a : active_mid_b;
+        if (tick_mid > 0) {
+            int fills = pt_broker_tick(&broker, tick_mid, &yes_book, &no_book, t0, on_engine_fill_, &fill_ctx);
             if (fills > 0) telemetry.orders_filled += fills;
         }
 
@@ -353,12 +365,14 @@ int main(int argc, char **argv)
         int num_acts = 0;
         pt_arb_mgr_tick(&arb_mgr, t0, arb_acts, &num_acts);
         for (int a = 0; a < num_acts; a++) {
-            if (arb_acts[a].action == PT_ARB_ACT_MARKET_HEDGE && active_mid > 0) {
-                pt_broker_submit_ex(&broker, active_mid, (arb_acts[a].leg == 0 ? 1 : 0),
+            if (arb_acts[a].action == PT_ARB_ACT_MARKET_HEDGE && active_mid_a > 0) {
+                pt_broker_submit_ex(&broker, active_mid_a, (arb_acts[a].leg == 0 ? 1 : 0),
                                     PT_SIDE_ASK, PT_OTYPE_IOC, arb_acts[a].price,
                                     arb_acts[a].size, arb_acts[a].leg == 0 ? &yes_book : &no_book,
                                     PT_STRAT_PARITY5M, 999999, t0);
-                pt_strat_stats_record_arb_hedge(&strat_stats, 0.0);
+                double hedge_px = (double)arb_acts[a].price / (double)PT_PRICE_SCALE;
+                double hedge_cost = fabs(hedge_px - 0.50) * (double)arb_acts[a].size + (hedge_px * (double)arb_acts[a].size * 0.001);
+                pt_strat_stats_record_arb_hedge(&strat_stats, hedge_cost);
             }
         }
 

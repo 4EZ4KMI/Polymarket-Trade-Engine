@@ -3,12 +3,40 @@
 
 #include "core/ptypes.h"
 #include "execution/pt_order.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define PT_LIFECYCLE_MAX_RECORDS 2048
+
+typedef enum {
+    PT_LC_STATE_PENDING = 0,
+    PT_LC_STATE_PARTIAL,
+    PT_LC_STATE_ONE_LEG_FILLED,
+    PT_LC_STATE_BOTH_LEGS_FILLED,
+    PT_LC_STATE_HEDGED,
+    PT_LC_STATE_SETTLED,
+    PT_LC_STATE_CANCELLED,
+    PT_LC_STATE_EXPIRED_UNRESOLVED
+} pt_lc_state_t;
+
+typedef struct {
+    pt_order_id_t  order_id;
+    int            is_yes;
+    int            side;
+    pt_size_t      requested_size;
+    pt_size_t      filled_size;
+    uint32_t       fill_count;
+    int64_t        cum_cost_scaled;
+    pt_price_t     avg_fill_price;
+    double         fees;
+    double         rebates;
+    double         slippage;
+    double         latency_ms;
+    uint64_t       last_fill_id;
+} pt_lc_leg_t;
 
 typedef struct {
     uint64_t       signal_id;
@@ -17,6 +45,10 @@ typedef struct {
     int            strategy;
     int            is_yes;
     int            side;
+    pt_lc_state_t  state;
+    
+    pt_lc_leg_t    leg_a; /* For Strat A: YES leg. For Strat B: primary leg */
+    pt_lc_leg_t    leg_b; /* For Strat A: NO leg */
     
     /* Edges at each lifecycle transition */
     double         theoretical_edge; /* Initial model/gross edge */
@@ -32,6 +64,7 @@ typedef struct {
     double         fill_ratio;
     double         adverse_selection;
     double         hedge_cost;
+    int            hedge_executed;
     double         fees;
     double         rebates;
     double         slippage;
@@ -103,13 +136,29 @@ void pt_lifecycle_on_fill(pt_lifecycle_tracker_t *t, uint64_t signal_id,
                           double fees, double rebates, double slippage,
                           uint64_t fill_id);
 
+void pt_lifecycle_on_fill_ex(pt_lifecycle_tracker_t *t, uint64_t signal_id,
+                             pt_order_id_t order_id, int is_yes,
+                             pt_size_t fill_qty, pt_price_t fill_price,
+                             double filled_edge, double latency_ms,
+                             double fees, double rebates, double slippage,
+                             uint64_t fill_id);
+
+/* Record executed hedge economics */
+void pt_lifecycle_on_hedge(pt_lifecycle_tracker_t *t, uint64_t signal_id, double hedge_cost);
+
 /* Finalize opportunity trade record */
 void pt_lifecycle_on_complete(pt_lifecycle_tracker_t *t, uint64_t signal_id,
                               double realized_pnl, double hedge_cost,
                               double realized_edge);
 
+void pt_lifecycle_on_complete_by_market(pt_lifecycle_tracker_t *t, pt_market_id_t market_id,
+                                        int strategy, double realized_pnl,
+                                        double hedge_cost, double realized_edge);
+
 /* Recompute averages using measured per-fill adverse selection trajectories */
 void pt_lifecycle_compute_stats(pt_lifecycle_tracker_t *t, const pt_adverse_tracker_t *adv);
+
+const char *pt_lc_state_to_str(pt_lc_state_t st);
 
 #ifdef __cplusplus
 }

@@ -18,6 +18,13 @@ void pt_broker_init(pt_broker_t *b, const pt_broker_cfg_t *cfg, pt_portfolio_t *
     pt_sim_queue_init(&b->sim_queue, &scfg);
 }
 
+void pt_broker_set_fill_callback(pt_broker_t *b, pt_broker_fill_cb_t cb, void *ud)
+{
+    if (!b) return;
+    b->default_fill_cb = cb;
+    b->default_fill_ud = ud;
+}
+
 pt_order_id_t pt_broker_submit(pt_broker_t *b, pt_market_id_t market_id,
                                int is_yes, int side, pt_price_t price,
                                pt_size_t size, const pt_book_t *current_book,
@@ -46,23 +53,6 @@ int pt_broker_cancel(pt_broker_t *b, pt_order_id_t oid, pt_nsec_t now)
     return pt_sim_queue_cancel(&b->sim_queue, oid, now);
 }
 
-void pt_broker_on_trade(pt_broker_t *b, pt_market_id_t market_id,
-                        int is_yes, pt_price_t trade_price, pt_size_t trade_size,
-                        int trade_side, pt_nsec_t now)
-{
-    if (!b) return;
-    pt_sim_queue_on_trade(&b->sim_queue, market_id, is_yes, trade_price, trade_size, trade_side, now);
-}
-
-void pt_broker_on_level_change(pt_broker_t *b, pt_market_id_t market_id,
-                              int is_yes, int side, pt_price_t price,
-                              int64_t old_size, int64_t new_size,
-                              pt_nsec_t now)
-{
-    if (!b) return;
-    pt_sim_queue_on_level_change(&b->sim_queue, market_id, is_yes, side, price, old_size, new_size, now);
-}
-
 typedef struct {
     pt_broker_t         *broker;
     pt_broker_fill_cb_t  user_cb;
@@ -86,6 +76,30 @@ static void on_sim_fill_(pt_order_t *o, pt_size_t fill_qty, pt_price_t fill_pric
     }
 }
 
+void pt_broker_on_trade(pt_broker_t *b, pt_market_id_t market_id,
+                        int is_yes, pt_price_t trade_price, pt_size_t trade_size,
+                        int trade_side, pt_nsec_t now)
+{
+    if (!b) return;
+    broker_tick_ctx_t ctx = {
+        .broker = b,
+        .user_cb = b->default_fill_cb,
+        .user_ud = b->default_fill_ud,
+        .market_id = market_id
+    };
+    pt_sim_queue_on_trade(&b->sim_queue, market_id, is_yes, trade_price, trade_size,
+                          trade_side, now, on_sim_fill_, &ctx);
+}
+
+void pt_broker_on_level_change(pt_broker_t *b, pt_market_id_t market_id,
+                              int is_yes, int side, pt_price_t price,
+                              int64_t old_size, int64_t new_size,
+                              pt_nsec_t now)
+{
+    if (!b) return;
+    pt_sim_queue_on_level_change(&b->sim_queue, market_id, is_yes, side, price, old_size, new_size, now);
+}
+
 int pt_broker_tick(pt_broker_t *b, pt_market_id_t market_id,
                    const pt_book_t *yes_book, const pt_book_t *no_book,
                    pt_nsec_t now, pt_broker_fill_cb_t cb, void *ud)
@@ -93,8 +107,8 @@ int pt_broker_tick(pt_broker_t *b, pt_market_id_t market_id,
     if (!b) return 0;
     broker_tick_ctx_t ctx = {
         .broker = b,
-        .user_cb = cb,
-        .user_ud = ud,
+        .user_cb = cb ? cb : b->default_fill_cb,
+        .user_ud = cb ? ud : b->default_fill_ud,
         .market_id = market_id
     };
     return pt_sim_queue_tick(&b->sim_queue, market_id, yes_book, no_book, now, on_sim_fill_, &ctx);

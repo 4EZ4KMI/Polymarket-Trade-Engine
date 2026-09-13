@@ -42,6 +42,48 @@ int pt_parse_polymarket_book_msg(const char *msg, size_t len, pt_poly_delta_t *o
     return (out->price > 0 || out->size == 0) ? 1 : 0;
 }
 
+int pt_parse_polymarket_trade_msg(const char *msg, size_t len, pt_poly_trade_t *out)
+{
+    if (!msg || len == 0 || !out) return 0;
+    memset(out, 0, sizeof(*out));
+
+    pt_json_tok_t et, ptok, stok, sdtok, astok, tstok;
+    if (pt_json_get(msg, len, "event_type", &et)) {
+        char ev[32]; pt_json_tok_str(&et, ev, sizeof(ev));
+        if (strcmp(ev, "trade") != 0 && strcmp(ev, "last_trade_price") != 0 && strcmp(ev, "match") != 0)
+            return 0;
+    } else {
+        return 0;
+    }
+
+    if (pt_json_get(msg, len, "asset_id", &astok)) {
+        pt_json_tok_str(&astok, out->asset_id, sizeof(out->asset_id));
+    }
+
+    if (pt_json_get(msg, len, "side", &sdtok)) {
+        char s[8]; pt_json_tok_str(&sdtok, s, sizeof(s));
+        out->side = (s[0] == 'B' || s[0] == 'b') ? PT_SIDE_BID : PT_SIDE_ASK;
+    } else {
+        out->side = PT_SIDE_BID;
+    }
+
+    if (pt_json_get(msg, len, "price", &ptok)) {
+        double p = 0; pt_json_tok_double(&ptok, &p);
+        out->price = (pt_price_t)(p * (double)PT_PRICE_SCALE + 0.5);
+    }
+
+    if (pt_json_get(msg, len, "size", &stok)) {
+        double sz = 0; pt_json_tok_double(&stok, &sz);
+        out->size = (pt_size_t)(sz + 0.5);
+    }
+
+    if (pt_json_get(msg, len, "timestamp", &tstok)) {
+        int64_t ts_ms = 0; pt_json_tok_int64(&tstok, &ts_ms);
+        out->timestamp_ns = (pt_nsec_t)ts_ms * 1000000ULL;
+    }
+    return (out->price > 0 && out->size > 0 && out->asset_id[0] != '\0') ? 1 : 0;
+}
+
 int pt_parse_binance_trade(const char *msg, size_t len, pt_binance_trade_t *out)
 {
     if (!msg || len == 0 || !out) return 0;

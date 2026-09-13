@@ -19,8 +19,18 @@ typedef struct {
     pt_nsec_t   timestamp_ns;
 } pt_poly_delta_t;
 
+/* --- Polymarket CLOB trade parser --- */
+typedef struct {
+    char        asset_id[80];
+    int         side;          /* PT_SIDE_BID / PT_SIDE_ASK */
+    pt_price_t  price;         /* scaled */
+    pt_size_t   size;          /* shares */
+    pt_nsec_t   timestamp_ns;
+} pt_poly_trade_t;
+
 /* Parses a raw Polymarket book delta message into struct. Returns 1 if ok, 0 if skipped. */
 int pt_parse_polymarket_book_msg(const char *msg, size_t len, pt_poly_delta_t *out);
+int pt_parse_polymarket_trade_msg(const char *msg, size_t len, pt_poly_trade_t *out);
 
 /* --- Binance BTC ticker/aggTrade parser --- */
 typedef struct {

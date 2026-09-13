@@ -42,9 +42,13 @@ typedef struct {
     double         pnl_difference;   /* realized_pnl - expected_pnl */
     
     pt_order_id_t  order_id;
+    pt_order_id_t  leg_b_order_id;
     uint64_t       fill_id;
+    uint64_t       leg_b_fill_id;
     pt_size_t      requested_size;
     pt_size_t      filled_size;
+    pt_size_t      leg_b_filled_size;
+    int            arb_status;
     int            completed;
 } pt_opportunity_record_t;
 
@@ -83,6 +87,11 @@ uint64_t pt_lifecycle_on_signal(pt_lifecycle_tracker_t *t,
 /* Track order submission */
 void pt_lifecycle_on_order(pt_lifecycle_tracker_t *t, uint64_t signal_id,
                            pt_order_id_t oid, double quoted_edge);
+
+/* Track dual-leg arbitrage order submissions (YES + NO) */
+void pt_lifecycle_on_arb_orders(pt_lifecycle_tracker_t *t, uint64_t signal_id,
+                                pt_order_id_t yes_oid, pt_order_id_t no_oid,
+                                double quoted_edge);
 
 /* Forward declaration */
 typedef struct pt_adverse_tracker_s pt_adverse_tracker_t;

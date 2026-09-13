@@ -191,3 +191,32 @@ void pt_book_record_trade(pt_book_t *b, pt_price_t price, pt_size_t size,
     if (seq > b->last_trade_seq)
         b->last_trade_seq = seq;
 }
+
+pt_size_t pt_book_get_level_size(const pt_book_t *b, int side, pt_price_t price)
+{
+    if (!b || price <= 0) return 0;
+    const pt_side_book_t *s = (side == PT_SIDE_BID) ? &b->bids : &b->asks;
+    int exact = 0;
+    int idx = side_find(s, price, &exact);
+    if (exact && idx < s->count) {
+        return s->levels[idx].size;
+    }
+    return 0;
+}
+
+pt_price_t pt_book_calc_mid(const pt_book_t *b)
+{
+    if (!b) return 0;
+    pt_price_t bb = 0, ba = 0;
+    pt_size_t bsz = 0, asz = 0;
+    int has_bid = (pt_book_best_bid(b, &bb, &bsz) == 0 && bb > 0);
+    int has_ask = (pt_book_best_ask(b, &ba, &asz) == 0 && ba > 0);
+    if (has_bid && has_ask) {
+        return (bb + ba) / 2;
+    } else if (has_bid) {
+        return bb;
+    } else if (has_ask) {
+        return ba;
+    }
+    return 0;
+}

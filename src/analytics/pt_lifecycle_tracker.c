@@ -48,6 +48,23 @@ void pt_lifecycle_on_order(pt_lifecycle_tracker_t *t, uint64_t signal_id,
         if (t->records[i].signal_id == signal_id) {
             t->records[i].order_id = oid;
             t->records[i].quoted_edge = quoted_edge;
+            t->records[i].arb_status = 1; /* PENDING */
+            break;
+        }
+    }
+}
+
+void pt_lifecycle_on_arb_orders(pt_lifecycle_tracker_t *t, uint64_t signal_id,
+                                pt_order_id_t yes_oid, pt_order_id_t no_oid,
+                                double quoted_edge)
+{
+    if (!t) return;
+    for (uint64_t i = 0; i < t->count; i++) {
+        if (t->records[i].signal_id == signal_id) {
+            t->records[i].order_id = yes_oid;
+            t->records[i].leg_b_order_id = no_oid;
+            t->records[i].quoted_edge = quoted_edge;
+            t->records[i].arb_status = 1; /* PENDING */
             break;
         }
     }
@@ -64,8 +81,14 @@ void pt_lifecycle_on_fill(pt_lifecycle_tracker_t *t, uint64_t signal_id,
     for (uint64_t i = 0; i < t->count; i++) {
         pt_opportunity_record_t *r = &t->records[i];
         if (r->signal_id == signal_id) {
-            r->fill_id = fill_id;
-            r->filled_size += fill_qty;
+            if (r->fill_id == 0) {
+                r->fill_id = fill_id;
+                r->filled_size += fill_qty;
+            } else {
+                r->leg_b_fill_id = fill_id;
+                r->leg_b_filled_size += fill_qty;
+                r->arb_status = 2; /* BOTH_FILLED */
+            }
             r->filled_edge = filled_edge;
             r->latency_ms = latency_ms;
             r->fees += fees;

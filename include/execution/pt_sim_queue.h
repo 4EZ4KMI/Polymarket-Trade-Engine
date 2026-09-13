@@ -44,21 +44,22 @@ pt_order_id_t pt_sim_queue_submit(pt_sim_queue_t *sq, pt_market_id_t market_id,
 /* Request order cancellation */
 int pt_sim_queue_cancel(pt_sim_queue_t *sq, pt_order_id_t oid, pt_nsec_t now);
 
-/* Notify simulator of a trade event on the market */
-void pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
-                           int is_yes, pt_price_t trade_price, pt_size_t trade_size,
-                           int trade_side, pt_nsec_t now);
+/* Process time tick: handle arrival acks, cancel acks, market sweeps */
+typedef void (*pt_sim_fill_callback_t)(pt_order_t *order, pt_size_t fill_qty,
+                                       pt_price_t fill_price, double adverse_sel,
+                                       void *ud);
+
+/* Notify simulator of a trade event on the market. Returns fills generated. */
+int pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
+                          int is_yes, pt_price_t trade_price, pt_size_t trade_size,
+                          int trade_side, pt_nsec_t now,
+                          pt_sim_fill_callback_t cb, void *ud);
 
 /* Notify simulator of a book level change */
 void pt_sim_queue_on_level_change(pt_sim_queue_t *sq, pt_market_id_t market_id,
                                   int is_yes, int side, pt_price_t price,
                                   int64_t old_size, int64_t new_size,
                                   pt_nsec_t now);
-
-/* Process time tick: handle arrival acks, cancel acks, market sweeps */
-typedef void (*pt_sim_fill_callback_t)(pt_order_t *order, pt_size_t fill_qty,
-                                       pt_price_t fill_price, double adverse_sel,
-                                       void *ud);
 
 int pt_sim_queue_tick(pt_sim_queue_t *sq, pt_market_id_t market_id,
                       const pt_book_t *yes_book, const pt_book_t *no_book,

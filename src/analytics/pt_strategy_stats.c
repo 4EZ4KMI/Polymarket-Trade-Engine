@@ -92,6 +92,19 @@ void pt_strat_stats_record_cancel(pt_strategy_stats_tracker_t *st, int strategy)
     s->cancelled++;
 }
 
+void pt_strat_stats_record_arb_hedge(pt_strategy_stats_tracker_t *st, double hedge_cost)
+{
+    if (!st) return;
+    st->strat_a.arbs_hedged++;
+    st->strat_a.sum_hedge_cost += hedge_cost;
+}
+
+void pt_strat_stats_record_arb_complete(pt_strategy_stats_tracker_t *st)
+{
+    if (!st) return;
+    st->strat_a.arbs_completed++;
+}
+
 void pt_strat_stats_record_settlement(pt_strategy_stats_tracker_t *st,
                                       int strategy,
                                       int is_win,
@@ -250,12 +263,14 @@ static void format_strat_json_(const pt_single_strat_stats_t *s, char *buf, size
     snprintf(buf, sz,
         "{\"signals\":%llu,\"would_trade\":%llu,\"risk_approved\":%llu,\"orders_submitted\":%llu,"
         "\"fills\":%llu,\"partial_fills\":%llu,\"cancelled\":%llu,\"wins\":%llu,\"losses\":%llu,"
+        "\"arbs_completed\":%llu,\"arbs_hedged\":%llu,\"sum_hedge_cost\":%.2f,"
         "\"win_rate\":%.4f,\"gross_profit\":%.2f,\"gross_loss\":%.2f,\"realized_pnl\":%.2f,"
         "\"fees\":%.2f,\"rebates\":%.2f,\"net_pnl\":%.2f,"
         "\"average_expected_edge\":%.4f,\"average_executable_edge\":%.4f,\"average_realized_edge\":%.4f,\"fill_rate\":%.3f}",
         (unsigned long long)s->signals, (unsigned long long)s->would_trade, (unsigned long long)s->risk_approved,
         (unsigned long long)s->orders_submitted, (unsigned long long)s->fills, (unsigned long long)s->partial_fills,
         (unsigned long long)s->cancelled, (unsigned long long)s->wins, (unsigned long long)s->losses,
+        (unsigned long long)s->arbs_completed, (unsigned long long)s->arbs_hedged, s->sum_hedge_cost,
         wr, s->gross_profit, s->gross_loss, s->realized_pnl, s->fees, s->rebates, s->net_pnl,
         a_exp, a_exe, a_rea, fr);
 }

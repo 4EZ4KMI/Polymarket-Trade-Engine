@@ -23,13 +23,19 @@ typedef struct {
     int              live_trading_enabled; /* HARD-LOCKED to 0 in paper mode */
 } pt_broker_cfg_t;
 
+typedef void (*pt_broker_fill_cb_t)(const pt_order_t *order, pt_size_t filled_shares,
+                                    pt_price_t fill_price, void *ud);
+
 typedef struct {
-    pt_sim_queue_t   sim_queue;
-    pt_broker_cfg_t  cfg;
-    pt_portfolio_t  *portfolio;
+    pt_sim_queue_t      sim_queue;
+    pt_broker_cfg_t     cfg;
+    pt_portfolio_t     *portfolio;
+    pt_broker_fill_cb_t default_fill_cb;
+    void               *default_fill_ud;
 } pt_broker_t;
 
 void pt_broker_init(pt_broker_t *b, const pt_broker_cfg_t *cfg, pt_portfolio_t *port);
+void pt_broker_set_fill_callback(pt_broker_t *b, pt_broker_fill_cb_t cb, void *ud);
 
 /* Submit limit/market order; returns order_id or 0 on error */
 pt_order_id_t pt_broker_submit(pt_broker_t *b, pt_market_id_t market_id,
@@ -57,9 +63,6 @@ void pt_broker_on_level_change(pt_broker_t *b, pt_market_id_t market_id,
                               pt_nsec_t now);
 
 /* Broker tick: evaluate resting orders against current book/trades and fire fills */
-typedef void (*pt_broker_fill_cb_t)(const pt_order_t *order, pt_size_t filled_shares,
-                                    pt_price_t fill_price, void *ud);
-
 int  pt_broker_tick(pt_broker_t *b, pt_market_id_t market_id,
                     const pt_book_t *yes_book, const pt_book_t *no_book,
                     pt_nsec_t now, pt_broker_fill_cb_t cb, void *ud);

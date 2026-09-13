@@ -10,6 +10,7 @@
 #include "storage/pt_dataset.h"
 #include "core/pt_market_registry.h"
 #include "portfolio/pt_portfolio.h"
+#include "execution/pt_broker.h"
 #include "analytics/pt_strategy_stats.h"
 #include "analytics/pt_adverse_selection.h"
 
@@ -32,6 +33,7 @@ typedef struct {
     double                      *last_btc_price;
     pt_market_registry_t        *registry;
     pt_portfolio_t              *portfolio;
+    pt_broker_t                 *broker;
     pt_strategy_stats_tracker_t *stats;
     pt_lifecycle_tracker_t      *lifecycle;
     pt_adverse_tracker_t        *adverse;
@@ -54,6 +56,7 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
                         double *last_btc_price,
                         pt_market_registry_t *registry,
                         pt_portfolio_t *portfolio,
+                        pt_broker_t *broker,
                         pt_strategy_stats_tracker_t *stats,
                         pt_lifecycle_tracker_t *lifecycle,
                         pt_adverse_tracker_t *adverse);

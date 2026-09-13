@@ -25,6 +25,10 @@ typedef struct {
     uint64_t cancelled;
     uint64_t wins;
     uint64_t losses;
+    uint64_t arbs_completed;
+    uint64_t arbs_hedged;
+    uint64_t arbs_failed;
+    double   sum_hedge_cost;
     double   win_rate;
     double   gross_profit;
     double   gross_loss;
@@ -100,6 +104,10 @@ void pt_strat_stats_record_settlement(pt_strategy_stats_tracker_t *st,
                                       double pnl,
                                       double cost_basis,
                                       double realized_edge);
+
+/* Record Strategy A arbitrage hedge / complete events */
+void pt_strat_stats_record_arb_hedge(pt_strategy_stats_tracker_t *st, double hedge_cost);
+void pt_strat_stats_record_arb_complete(pt_strategy_stats_tracker_t *st);
 
 /* Compute Sharpe ratio from settled returns (returns 0.0 if insufficient data) */
 double pt_strat_stats_calc_sharpe(const pt_strategy_stats_tracker_t *st, int *has_enough_data);

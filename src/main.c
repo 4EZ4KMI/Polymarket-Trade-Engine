@@ -176,7 +176,7 @@ int main(int argc, char **argv)
                         &yes_book, &no_book, &btc_engine,
                         &risk_engine, &telemetry, &dataset_writer,
                         &btc_price, &market_reg, &portfolio,
-                        &strat_stats, &lc_tracker, &adverse_tracker);
+                        &broker, &strat_stats, &lc_tracker, &adverse_tracker);
 
     pt_http_server_t http_server;
     if (pt_http_server_init(&http_server, port, &reactor, &portfolio,
@@ -194,6 +194,7 @@ int main(int argc, char **argv)
         .csv_log = &csv_log,
         .telemetry = &telemetry
     };
+    pt_broker_set_fill_callback(&broker, on_engine_fill_, &fill_ctx);
 
     uint64_t tick_count = 0;
     pt_nsec_t last_stat_print = pt_clock_mono_ns();
@@ -266,19 +267,22 @@ int main(int argc, char **argv)
                 pt_arb_op_t op;
                 int op_idx = pt_arb_mgr_open(&arb_mgr, &arb_opp, &op, 0, t0);
                 if (op_idx >= 0) {
-                    pt_order_id_t y_oid = pt_broker_submit(&broker, active_mid, 1, PT_SIDE_BID,
-                                                           (pt_price_t)arb_opp.avg_yes_scaled,
-                                                           approved, &yes_book,
-                                                           PT_STRAT_PARITY5M, t0);
-                    pt_order_id_t n_oid = pt_broker_submit(&broker, active_mid, 0, PT_SIDE_BID,
-                                                           (pt_price_t)arb_opp.avg_no_scaled,
-                                                           approved, &no_book,
-                                                           PT_STRAT_PARITY5M, t0);
+                    pt_order_id_t y_oid = pt_broker_submit_ex(&broker, active_mid, 1, PT_SIDE_BID,
+                                                              PT_OTYPE_LIMIT,
+                                                              (pt_price_t)arb_opp.avg_yes_scaled,
+                                                              approved, &yes_book,
+                                                              PT_STRAT_PARITY5M, sig_id, t0);
+                    pt_order_id_t n_oid = pt_broker_submit_ex(&broker, active_mid, 0, PT_SIDE_BID,
+                                                              PT_OTYPE_LIMIT,
+                                                              (pt_price_t)arb_opp.avg_no_scaled,
+                                                              approved, &no_book,
+                                                              PT_STRAT_PARITY5M, sig_id, t0);
                     arb_mgr.ops[op_idx].yes_oid = y_oid;
                     arb_mgr.ops[op_idx].no_oid  = n_oid;
                     telemetry.orders_submitted += 2;
-                    pt_lifecycle_on_order(&lc_tracker, sig_id, y_oid, arb_opp.net_edge);
-                    pt_strat_stats_record_order(&strat_stats, PT_STRAT_PARITY5M, yes_book.bids.levels[0].size);
+                    pt_lifecycle_on_arb_orders(&lc_tracker, sig_id, y_oid, n_oid, arb_opp.net_edge);
+                    pt_strat_stats_record_order(&strat_stats, PT_STRAT_PARITY5M, yes_book.bids.count > 0 ? yes_book.bids.levels[0].size : 0);
+                    pt_strat_stats_record_order(&strat_stats, PT_STRAT_PARITY5M, no_book.bids.count > 0 ? no_book.bids.levels[0].size : 0);
                 }
             } else {
                 pt_csv_log_rejection(&csv_log, t0, sig.signal_id, pt_risk_reject_str(rej), (double)rej);
@@ -326,10 +330,11 @@ int main(int argc, char **argv)
 
             if (is_approved) {
                 const pt_book_t *tgt_bk = sig.is_yes ? &yes_book : &no_book;
-                pt_order_id_t b_oid = pt_broker_submit(&broker, active_mid, sig.is_yes, PT_SIDE_BID,
-                                                       sig.target_price, approved,
-                                                       tgt_bk,
-                                                       PT_STRAT_FLOW15M, t0);
+                pt_order_id_t b_oid = pt_broker_submit_ex(&broker, active_mid, sig.is_yes, PT_SIDE_BID,
+                                                          PT_OTYPE_LIMIT,
+                                                          sig.target_price, approved,
+                                                          tgt_bk,
+                                                          PT_STRAT_FLOW15M, sig_id, t0);
                 telemetry.orders_submitted++;
                 pt_lifecycle_on_order(&lc_tracker, sig_id, b_oid, skew_sig.executable_edge);
                 pt_strat_stats_record_order(&strat_stats, PT_STRAT_FLOW15M, tgt_bk->bids.count > 0 ? tgt_bk->bids.levels[0].size : 0);
@@ -352,12 +357,13 @@ int main(int argc, char **argv)
                                     PT_SIDE_ASK, PT_OTYPE_IOC, arb_acts[a].price,
                                     arb_acts[a].size, arb_acts[a].leg == 0 ? &yes_book : &no_book,
                                     PT_STRAT_PARITY5M, 999999, t0);
+                pt_strat_stats_record_arb_hedge(&strat_stats, 0.0);
             }
         }
 
         pt_nsec_t t1 = pt_clock_mono_ns();
         pt_telemetry_record_sample(&telemetry.loop_tick_time, t1 - t0);
-        pt_telemetry_record_sample(&telemetry.e2e_latency, t1 - t0 + 2500ULL);
+        pt_telemetry_record_sample(&telemetry.e2e_latency, t1 - t0);
 
         if (t1 - last_stat_print >= 3000000000ULL) {
             last_stat_print = t1;

@@ -109,11 +109,13 @@ int pt_sim_queue_cancel(pt_sim_queue_t *sq, pt_order_id_t oid, pt_nsec_t now)
     return -1;
 }
 
-void pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
-                           int is_yes, pt_price_t trade_price, pt_size_t trade_size,
-                           int trade_side, pt_nsec_t now)
+int pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
+                          int is_yes, pt_price_t trade_price, pt_size_t trade_size,
+                          int trade_side, pt_nsec_t now,
+                          pt_sim_fill_callback_t cb, void *ud)
 {
-    if (!sq || trade_size == 0) return;
+    if (!sq || trade_size == 0) return 0;
+    int fills_count = 0;
 
     for (int i = 0; i < PT_SIM_MAX_ORDERS; i++) {
         pt_order_t *o = &sq->orders[i];
@@ -131,8 +133,10 @@ void pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
         int interacts = 0;
         if (o->side == PT_SIDE_BID) {
             if (trade_side == PT_SIDE_ASK && trade_price <= o->price) interacts = 1;
+            else if (trade_side != PT_SIDE_BID && trade_price <= o->price) interacts = 1;
         } else {
             if (trade_side == PT_SIDE_BID && trade_price >= o->price) interacts = 1;
+            else if (trade_side != PT_SIDE_ASK && trade_price >= o->price) interacts = 1;
         }
 
         if (interacts) {
@@ -145,10 +149,12 @@ void pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
                 o->queue_ahead = 0;
                 pt_size_t fill_qty = (excess_trade < o->remaining_size) ? excess_trade : o->remaining_size;
                 if (fill_qty > 0) {
+                    double adv = (double)o->price * (sq->cfg.adverse_selection_bps / 10000.0);
                     o->filled_size += fill_qty;
                     o->remaining_size -= fill_qty;
                     o->cum_cost_scaled += (int64_t)fill_qty * (int64_t)o->price;
                     o->avg_fill_price = (pt_price_t)(o->cum_cost_scaled / o->filled_size);
+                    o->adverse_selection += adv * (double)fill_qty / (double)PT_PRICE_SCALE;
                     o->last_update_t = now;
                     if (o->original_size > 0) {
                         o->fill_ratio = (double)o->filled_size / (double)o->original_size;
@@ -161,11 +167,15 @@ void pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
                     } else {
                         o->state = PT_OSTATE_PARTIAL;
                     }
+
+                    if (cb) cb(o, fill_qty, o->price, adv, ud);
+                    fills_count++;
                 }
             }
             o->queue_ahead_after_updates = o->queue_ahead;
         }
     }
+    return fills_count;
 }
 
 void pt_sim_queue_on_level_change(pt_sim_queue_t *sq, pt_market_id_t market_id,
@@ -282,20 +292,37 @@ int pt_sim_queue_tick(pt_sim_queue_t *sq, pt_market_id_t market_id,
         }
 
         if (swept) {
-            pt_size_t fill_qty = o->remaining_size;
-            double adv = (double)o->price * (sq->cfg.adverse_selection_bps / 10000.0);
-            pt_price_t fill_p = o->price;
+            int opp_side = (o->side == PT_SIDE_BID) ? PT_SIDE_ASK : PT_SIDE_BID;
+            int64_t avg_p = 0;
+            int lv_used = 0;
+            pt_size_t can_fill = pt_book_walk(bk, opp_side, o->remaining_size, &avg_p, &lv_used);
+            pt_size_t fill_qty = (can_fill > 0) ? can_fill : (o->queue_ahead == 0 ? (opp_sz < o->remaining_size ? opp_sz : o->remaining_size) : 0);
 
-            o->filled_size += fill_qty;
-            o->remaining_size = 0;
-            o->cum_cost_scaled += (int64_t)fill_qty * (int64_t)fill_p;
-            o->avg_fill_price = (pt_price_t)(o->cum_cost_scaled / o->filled_size);
-            o->adverse_selection += adv * (double)fill_qty / (double)PT_PRICE_SCALE;
-            o->state = PT_OSTATE_FILLED;
-            o->last_update_t = now;
+            if (fill_qty > 0) {
+                double adv = (double)o->price * (sq->cfg.adverse_selection_bps / 10000.0);
+                pt_price_t fill_p = (avg_p > 0) ? (pt_price_t)avg_p : o->price;
 
-            if (cb) cb(o, fill_qty, fill_p, adv, ud);
-            fills_count++;
+                o->filled_size += fill_qty;
+                o->remaining_size -= fill_qty;
+                o->cum_cost_scaled += (int64_t)fill_qty * (int64_t)fill_p;
+                o->avg_fill_price = (pt_price_t)(o->cum_cost_scaled / o->filled_size);
+                o->adverse_selection += adv * (double)fill_qty / (double)PT_PRICE_SCALE;
+                o->last_update_t = now;
+                if (o->original_size > 0) {
+                    o->fill_ratio = (double)o->filled_size / (double)o->original_size;
+                }
+                if (now >= o->submit_t) {
+                    o->time_to_fill_ns = now - o->submit_t;
+                }
+                if (o->remaining_size == 0) {
+                    o->state = PT_OSTATE_FILLED;
+                } else {
+                    o->state = PT_OSTATE_PARTIAL;
+                }
+
+                if (cb) cb(o, fill_qty, fill_p, adv, ud);
+                fills_count++;
+            }
         }
     }
 

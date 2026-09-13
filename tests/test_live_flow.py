@@ -72,6 +72,11 @@ def run_integration_test():
         s.sendall((json.dumps(n_ask) + "\n").encode())
         time.sleep(0.5)
 
+        # Step 4b: Stream real Polymarket trade message and book update
+        poly_tr = {"event_type": "trade", "asset_id": "713210455829103859218392", "side": "SELL", "price": "0.485", "size": "200", "timestamp": now_ms + 50}
+        s.sendall((json.dumps(poly_tr) + "\n").encode())
+        time.sleep(0.2)
+
         status = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status").read().decode())
         book = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/book").read().decode())
         assert status["market_status"] == "ACTIVE", f"Expected ACTIVE, got {status['market_status']}"

@@ -32,6 +32,7 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
                         double *last_btc_price,
                         pt_market_registry_t *registry,
                         pt_portfolio_t *portfolio,
+                        pt_broker_t *broker,
                         pt_strategy_stats_tracker_t *stats,
                         pt_lifecycle_tracker_t *lifecycle,
                         pt_adverse_tracker_t *adverse)
@@ -48,6 +49,7 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
     b->last_btc_price = last_btc_price;
     b->registry = registry;
     b->portfolio = portfolio;
+    b->broker = broker;
     b->stats = stats;
     b->lifecycle = lifecycle;
     b->adverse = adverse;
@@ -244,7 +246,47 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
         return;
     }
 
-    /* 4. Polymarket Real Book Messages */
+    /* 4. Polymarket Real Trades */
+    pt_poly_trade_t ptr;
+    if (pt_parse_polymarket_trade_msg(line, len, &ptr)) {
+        b->total_poly_events++;
+        if (b->telemetry) b->telemetry->poly_events_total++;
+        if (b->risk) pt_risk_feed_touch_poly(b->risk, now);
+
+        int is_yes = 0;
+        pt_market_entry_t *m = NULL;
+        if (b->registry) {
+            m = pt_market_registry_find_by_token(b->registry, ptr.asset_id, &is_yes);
+            if (!m) return;
+        } else {
+            return;
+        }
+
+        if (b->broker) {
+            pt_broker_on_trade(b->broker, m->market_id, is_yes, ptr.price, ptr.size, ptr.side, now);
+        }
+
+        pt_book_t *target = is_yes ? b->yes_book : b->no_book;
+        if (target) {
+            pt_book_record_trade(target, ptr.price, ptr.size, ptr.side, 1);
+        }
+
+        if (b->dataset_writer) {
+            pt_dataset_event_t ev = {
+                .event_type = PT_DATA_EV_POLY_TRADE,
+                .timestamp_ns = now,
+                .market_id = m->market_id,
+                .is_yes = (uint8_t)is_yes,
+                .side = (uint8_t)ptr.side,
+                .price = ptr.price,
+                .size = ptr.size
+            };
+            pt_dataset_writer_append(b->dataset_writer, &ev);
+        }
+        return;
+    }
+
+    /* 5. Polymarket Real Book Messages */
     pt_poly_delta_t pd;
     if (pt_parse_polymarket_book_msg(line, len, &pd)) {
         b->total_poly_events++;
@@ -269,17 +311,26 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
 
         pt_book_t *target = is_yes ? b->yes_book : b->no_book;
         if (target) {
+            int64_t old_size = (int64_t)pt_book_get_level_size(target, pd.side, pd.price);
+
             if (pd.is_snapshot) {
                 pt_level_t lvl = { .price = pd.price, .size = pd.size };
                 pt_book_snapshot(target, pd.side, &lvl, 1, 1);
             } else {
-                pt_book_update(target, pd.side, pd.price, pd.size, 1, 1);
+                pt_book_update(target, pd.side, pd.price, (int64_t)pd.size, 0, 1);
             }
-        }
 
-        if (b->adverse) {
-            pt_market_id_t mid = m ? m->market_id : (b->registry ? b->registry->active_market_id : 1);
-            pt_adverse_tracker_on_price(b->adverse, mid, is_yes, pd.price, now);
+            if (b->broker) {
+                pt_broker_on_level_change(b->broker, m->market_id, is_yes, pd.side,
+                                          pd.price, old_size, (int64_t)pd.size, now);
+            }
+
+            if (b->adverse) {
+                pt_price_t mid_p = pt_book_calc_mid(target);
+                if (mid_p > 0) {
+                    pt_adverse_tracker_on_price(b->adverse, m->market_id, is_yes, mid_p, now);
+                }
+            }
         }
 
         if (b->dataset_writer) {

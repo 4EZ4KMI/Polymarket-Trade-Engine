@@ -50,6 +50,8 @@ int pt_book_snapshot(pt_book_t *b, int side, const pt_level_t *levels,
 int   pt_book_best_bid(const pt_book_t *b, pt_price_t *price, pt_size_t *size);
 int   pt_book_best_ask(const pt_book_t *b, pt_price_t *price, pt_size_t *size);
 int   pt_book_mid(const pt_book_t *b, double *mid);
+pt_size_t pt_book_get_level_size(const pt_book_t *b, int side, pt_price_t price);
+pt_price_t pt_book_calc_mid(const pt_book_t *b);
 
 /* cumulative size across the best N levels of a side. 0 => all levels. */
 pt_size_t pt_book_depth_volume(const pt_book_t *b, int side, int levels);

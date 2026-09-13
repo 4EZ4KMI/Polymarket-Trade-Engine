@@ -69,7 +69,7 @@ PT_T(benchmark_hot_paths)
 
     t0 = pt_clock_mono_ns();
     for (int i = 0; i < N_ITER; i++) {
-        pt_sim_queue_on_trade(&sq, 101, 1, 480, 5, PT_SIDE_ASK, 2000 + i);
+        pt_sim_queue_on_trade(&sq, 101, 1, 480, 5, PT_SIDE_ASK, 2000 + i, NULL, NULL);
     }
     t1 = pt_clock_mono_ns();
     double queue_ns_per_op = (double)(t1 - t0) / (double)N_ITER;

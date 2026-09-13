@@ -1,0 +1,38 @@
+export interface EngineStatus {
+  status: string;
+  mode: string;
+  uptime_sec: number;
+  kill_switch_tripped: number;
+  kill_reason: string;
+  btc_price: number;
+}
+
+export interface Portfolio {
+  cash: number;
+  equity: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  total_exposure: number;
+  trades: number;
+  win_rate: number;
+}
+
+export interface OrderBook {
+  yes: { best_bid: number; bid_size: number; best_ask: number; ask_size: number };
+  no: { best_bid: number; bid_size: number; best_ask: number; ask_size: number };
+}
+
+export interface Telemetry {
+  poly_events: number;
+  btc_events: number;
+  signals: number;
+  orders_submitted: number;
+  orders_filled: number;
+  orders_cancelled: number;
+  ring_drops: number;
+  latency_e2e_avg_us: number;
+  latency_e2e_p50_us: number;
+  latency_e2e_p90_us: number;
+  latency_e2e_p99_us: number;
+  latency_e2e_max_us: number;
+}

@@ -1,4 +1,4 @@
-# Polymarket HFT trader — build (C core)
+# Polymarket HFT trader — build (C core + engine)
 CC       ?= cc
 CFLAGS   ?= -O2
 CFLAGS   += -std=c11 -Wall -Wextra -Wno-unused-parameter -pthread
@@ -6,7 +6,6 @@ CPPFLAGS += -Iinclude
 
 UNAME_S := $(shell uname -s)
 
-# kqueue on macOS/*BSD, epoll on Linux
 ifeq ($(UNAME_S),Linux)
 CPPFLAGS += -DPMT_USE_EPOLL=1 -D_GNU_SOURCE
 LDLIBS   += -lpthread
@@ -17,19 +16,20 @@ endif
 
 BUILD   := build
 LIB     := $(BUILD)/libpmtcore.a
+ENGINE  := $(BUILD)/bin/pmt_engine
 
-CORE_SRC := $(wildcard src/core/*.c src/util/*.c src/orderbook/*.c \
-                    src/features/*.c src/execution/*.c src/risk/*.c \
+CORE_SRC := $(filter-out src/main.c,$(wildcard src/core/*.c src/util/*.c src/orderbook/*.c \
+                    src/features/*.c src/strategies/*.c src/execution/*.c src/risk/*.c \
                     src/portfolio/*.c src/storage/*.c src/net/*.c \
-                    src/telemetry/*.c src/backtest/*.c)
+                    src/telemetry/*.c src/backtest/*.c))
 CORE_OBJ := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(CORE_SRC))
 
 TEST_SRCS := $(filter-out tests/test_harness.c,$(wildcard tests/test_*.c))
 TEST_BINS := $(patsubst tests/test_%.c,$(BUILD)/bin/test_%,$(TEST_SRCS))
 
-.PHONY: all core tests run_tests clean format
+.PHONY: all core engine tests run_tests clean format
 
-all: core tests
+all: core engine tests
 
 $(BUILD)/obj/%.o: src/%.c
 	@mkdir -p $(dir $@)
@@ -41,9 +41,16 @@ $(LIB): $(CORE_OBJ)
 
 core: $(LIB)
 
+$(ENGINE): src/main.c $(LIB)
+	@mkdir -p $(BUILD)/bin
+	$(CC) $(CFLAGS) $(CPPFLAGS) src/main.c $(LIB) -o $@ $(LDLIBS)
+	@echo "built engine: $@"
+
+engine: $(ENGINE)
+
 $(BUILD)/bin/test_%: tests/test_%.c tests/test_harness.c $(LIB)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(CPPFLAGS) tests/test_%.c tests/test_harness.c $(LIB) -o $@ $(LDLIBS)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< tests/test_harness.c $(LIB) -o $@ $(LDLIBS)
 	@echo "built $@"
 
 tests: $(TEST_BINS)

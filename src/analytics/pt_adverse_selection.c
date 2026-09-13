@@ -118,3 +118,22 @@ void pt_adverse_tracker_on_price(pt_adverse_tracker_t *t,
         t->overall_avg_adv_bps = 0.0;
     }
 }
+
+double pt_adverse_get_fill_bps(const pt_adverse_tracker_t *t, uint64_t fill_id)
+{
+    if (!t || fill_id == 0) return 0.0;
+
+    for (size_t i = 0; i < t->count; i++) {
+        const pt_adverse_record_t *r = &t->records[i];
+        if (r->fill_id == fill_id) {
+            /* Return movement at highest measured horizon */
+            for (int h = PT_ADV_HORIZONS - 1; h >= 0; h--) {
+                if (r->horizon_measured[h]) {
+                    return r->movement_bps[h];
+                }
+            }
+            return 0.0; /* Not yet matured to 10ms */
+        }
+    }
+    return 0.0;
+}

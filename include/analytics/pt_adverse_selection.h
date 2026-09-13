@@ -36,7 +36,7 @@ typedef struct {
     int            complete;
 } pt_adverse_record_t;
 
-typedef struct {
+typedef struct pt_adverse_tracker_s {
     pt_adverse_record_t records[PT_ADV_MAX_RECORDS];
     size_t              count;
     uint64_t            next_fill_id;
@@ -69,6 +69,9 @@ void pt_adverse_tracker_on_price(pt_adverse_tracker_t *t,
                                  int is_yes,
                                  pt_price_t current_mid_price,
                                  pt_nsec_t now);
+
+/* Get measured adverse selection in bps for a specific fill ID at the highest mature horizon */
+double pt_adverse_get_fill_bps(const pt_adverse_tracker_t *t, uint64_t fill_id);
 
 #ifdef __cplusplus
 }

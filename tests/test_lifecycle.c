@@ -33,7 +33,7 @@ PT_T(market_lifecycle_settlement)
 
     /* Tick at expiry with BTC = 88000.0 (> 87500 strike -> YES wins) */
     m.state = PT_LIFECYCLE_EXPIRED;
-    int resolved = pt_market_lifecycle_tick(&m, 88000.0, expiry_t, &p);
+    int resolved = pt_market_lifecycle_tick(&m, 88000.0, expiry_t, &p, NULL, NULL);
     PT_ASSERT(resolved == 1);
     PT_ASSERT(m.state == PT_LIFECYCLE_RESOLVED);
     PT_ASSERT(m.resolved_winning_outcome == 1);

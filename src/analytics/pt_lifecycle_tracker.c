@@ -1,4 +1,5 @@
 #include "analytics/pt_lifecycle_tracker.h"
+#include "analytics/pt_adverse_selection.h"
 #include <string.h>
 
 void pt_lifecycle_tracker_init(pt_lifecycle_tracker_t *t)
@@ -56,20 +57,21 @@ void pt_lifecycle_on_fill(pt_lifecycle_tracker_t *t, uint64_t signal_id,
                           pt_size_t fill_qty, pt_price_t fill_price,
                           double filled_edge, double latency_ms,
                           double fees, double rebates, double slippage,
-                          double adverse_selection)
+                          uint64_t fill_id)
 {
     if (!t) return;
     (void)fill_price;
     for (uint64_t i = 0; i < t->count; i++) {
         pt_opportunity_record_t *r = &t->records[i];
         if (r->signal_id == signal_id) {
+            r->fill_id = fill_id;
             r->filled_size += fill_qty;
             r->filled_edge = filled_edge;
             r->latency_ms = latency_ms;
             r->fees += fees;
             r->rebates += rebates;
             r->slippage += slippage;
-            r->adverse_selection += adverse_selection;
+            r->adverse_selection = 0.0; /* Trajectory measured as post-fill price deltas mature */
             if (r->requested_size > 0) {
                 r->fill_ratio = (double)r->filled_size / (double)r->requested_size;
             }
@@ -97,7 +99,7 @@ void pt_lifecycle_on_complete(pt_lifecycle_tracker_t *t, uint64_t signal_id,
     }
 }
 
-void pt_lifecycle_compute_stats(pt_lifecycle_tracker_t *t)
+void pt_lifecycle_compute_stats(pt_lifecycle_tracker_t *t, const pt_adverse_tracker_t *adv)
 {
     if (!t || t->completed_count == 0) return;
     double sum_theo = 0.0, sum_exec = 0.0, sum_real = 0.0;
@@ -105,8 +107,11 @@ void pt_lifecycle_compute_stats(pt_lifecycle_tracker_t *t)
     double sum_exp_pnl = 0.0, sum_real_pnl = 0.0;
 
     for (uint64_t i = 0; i < t->count; i++) {
-        const pt_opportunity_record_t *r = &t->records[i];
+        pt_opportunity_record_t *r = &t->records[i];
         if (!r->completed) continue;
+        if (adv && r->fill_id > 0) {
+            r->adverse_selection = pt_adverse_get_fill_bps(adv, r->fill_id);
+        }
         sum_theo += r->theoretical_edge;
         sum_exec += r->executable_edge;
         sum_real += r->realized_edge;

@@ -57,21 +57,21 @@ static void on_engine_fill_(const pt_order_t *order, pt_size_t filled_shares,
                         (double)(now - order->submit_t) / 1000000.0 : 0.0;
     double fee = (order->type == PT_OTYPE_LIMIT) ? 0.0 : (fill_p * (double)filled_shares * 0.001);
     double rebate = 0.0;
-    double adv_bps = ctx->adverse ? ctx->adverse->overall_avg_adv_bps : 0.0;
 
     if (ctx->stats) {
         pt_strat_stats_record_fill(ctx->stats, order->strategy, fill_p, filled_shares,
                                    slippage_bps, fee, rebate, latency_ms, order->queue_ahead_at_submit);
     }
 
+    uint64_t fill_id = 0;
     if (ctx->adverse) {
-        pt_adverse_record_fill(ctx->adverse, now, order->market_id, order->strategy,
-                               order->is_yes, order->side, fill_price, filled_shares);
+        fill_id = pt_adverse_record_fill(ctx->adverse, now, order->market_id, order->strategy,
+                                         order->is_yes, order->side, fill_price, filled_shares);
     }
 
     if (ctx->lifecycle) {
         pt_lifecycle_on_fill(ctx->lifecycle, order->signal_id, filled_shares, fill_price,
-                             fill_p, latency_ms, fee, rebate, slippage_bps / 100.0, adv_bps);
+                             fill_p, latency_ms, fee, rebate, slippage_bps / 100.0, fill_id);
     }
 
     if (ctx->csv_log) {

@@ -125,6 +125,54 @@ PT_T(unresolved_trades_win_rate)
     PT_ASSERT_NEAR(st.strat_a.win_rate, 0.0, 0.0001);
 }
 
+PT_T(per_fill_adverse_selection_trajectory)
+{
+    pt_adverse_tracker_t adv;
+    pt_adverse_tracker_init(&adv);
+
+    pt_lifecycle_tracker_t lc;
+    pt_lifecycle_tracker_init(&lc);
+
+    pt_nsec_t t0 = 1000000000000ULL; /* 1000s in ns */
+
+    /* Opportunity 1: Bought YES @ 0.50 (5000 price scale) */
+    uint64_t sig1 = pt_lifecycle_on_signal(&lc, 1001, t0, 101, PT_STRAT_PARITY5M, 1, PT_SIDE_BID,
+                                           0.02, 0.02, 0.02, 0.9, 100, 2.0);
+    uint64_t fill1 = pt_adverse_record_fill(&adv, t0, 101, PT_STRAT_PARITY5M, 1, PT_SIDE_BID, 5000, 100);
+    PT_ASSERT(fill1 == 1);
+    pt_lifecycle_on_fill(&lc, sig1, 100, 5000, 0.50, 2.5, 0.0, 0.0, 0.0, fill1);
+
+    /* Opportunity 2: Bought YES @ 0.52 (5200 price scale) 50ms later */
+    pt_nsec_t t1 = t0 + 50000000ULL;
+    uint64_t sig2 = pt_lifecycle_on_signal(&lc, 1002, t1, 101, PT_STRAT_PARITY5M, 1, PT_SIDE_BID,
+                                           0.03, 0.03, 0.03, 0.85, 100, 3.0);
+    uint64_t fill2 = pt_adverse_record_fill(&adv, t1, 101, PT_STRAT_PARITY5M, 1, PT_SIDE_BID, 5200, 100);
+    PT_ASSERT(fill2 == 2);
+    pt_lifecycle_on_fill(&lc, sig2, 100, 5200, 0.52, 1.8, 0.0, 0.0, 0.0, fill2);
+
+    /* Price tick at t0 + 15ms: Price drops to 0.4950 (4950) -> Fill 1 (at 10ms horizon): adverse movement = (5000 - 4950)/5000 * 10000 = +100 bps */
+    pt_adverse_tracker_on_price(&adv, 101, 1, 4950, t0 + 15000000ULL);
+    PT_ASSERT_NEAR(pt_adverse_get_fill_bps(&adv, fill1), 100.0, 0.1);
+    PT_ASSERT_NEAR(pt_adverse_get_fill_bps(&adv, fill2), 0.0, 0.1); /* Fill 2 has not reached 10ms yet */
+
+    /* Price tick at t0 + 70ms: Price rises to 0.5300 (5300):
+       - Fill 1 (at 70ms elapsed, 50ms horizon measured): (5000 - 5300)/5000 * 10000 = -600 bps (favorable)
+       - Fill 2 (at 20ms elapsed from t1, 10ms horizon measured): (5200 - 5300)/5200 * 10000 = -192.3 bps (favorable) */
+    pt_adverse_tracker_on_price(&adv, 101, 1, 5300, t0 + 70000000ULL);
+    PT_ASSERT_NEAR(pt_adverse_get_fill_bps(&adv, fill1), -600.0, 0.1);
+    PT_ASSERT_NEAR(pt_adverse_get_fill_bps(&adv, fill2), -192.3, 0.5);
+
+    /* Complete opportunities and compute lifecycle stats with real measured trajectories */
+    pt_lifecycle_on_complete(&lc, sig1, 50.0, 0.0, 0.02);
+    pt_lifecycle_on_complete(&lc, sig2, 48.0, 0.0, 0.03);
+
+    pt_lifecycle_compute_stats(&lc, &adv);
+    PT_ASSERT(lc.completed_count == 2);
+    PT_ASSERT_NEAR(lc.records[0].adverse_selection, -600.0, 0.1);
+    PT_ASSERT_NEAR(lc.records[1].adverse_selection, -192.3, 0.5);
+    /* Average adverse selection = (-600.0 + (-192.30769)) / 2 = -396.15 bps */
+    PT_ASSERT_NEAR(lc.avg_adverse_selection, -396.15, 0.5);
+}
 PT_T(real_sharpe_calculation)
 {
     pt_strategy_stats_tracker_t st;
@@ -146,5 +194,6 @@ PT_T(real_sharpe_calculation)
     PT_ASSERT(has_sharpe == 1);
     PT_ASSERT(sharpe > 0.0);
 }
+
 
 

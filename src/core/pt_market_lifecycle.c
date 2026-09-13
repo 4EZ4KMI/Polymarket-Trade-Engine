@@ -36,7 +36,9 @@ double pt_market_time_to_expiry_sec(const pt_market_info_t *m, pt_nsec_t now)
 }
 
 int pt_market_lifecycle_tick(pt_market_info_t *m, double current_btc_price,
-                              pt_nsec_t now, pt_portfolio_t *portfolio)
+                              pt_nsec_t now, pt_portfolio_t *portfolio,
+                              pt_strategy_stats_tracker_t *stats,
+                              pt_lifecycle_tracker_t *lc)
 {
     if (!m) return 0;
 
@@ -57,7 +59,7 @@ int pt_market_lifecycle_tick(pt_market_info_t *m, double current_btc_price,
         m->state = PT_LIFECYCLE_RESOLVED;
 
         if (portfolio) {
-            pt_portfolio_settle_market(portfolio, m->market_id, m->resolved_winning_outcome, NULL, NULL);
+            pt_portfolio_settle_market(portfolio, m->market_id, m->resolved_winning_outcome, stats, lc);
         }
         return 1; /* Resolved */
     }

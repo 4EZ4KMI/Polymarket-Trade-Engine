@@ -265,7 +265,7 @@ void pt_strat_stats_json_analytics(const pt_strategy_stats_tracker_t *st, char *
     if (!st || !buf || max_len == 0) return;
 
     if (st->lifecycle) {
-        pt_lifecycle_compute_stats((pt_lifecycle_tracker_t *)st->lifecycle);
+        pt_lifecycle_compute_stats((pt_lifecycle_tracker_t *)st->lifecycle, st->adverse);
     }
 
     uint64_t total_orders = st->strat_a.orders_submitted + st->strat_b.orders_submitted;

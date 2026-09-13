@@ -42,6 +42,7 @@ typedef struct {
     double         pnl_difference;   /* realized_pnl - expected_pnl */
     
     pt_order_id_t  order_id;
+    uint64_t       fill_id;
     pt_size_t      requested_size;
     pt_size_t      filled_size;
     int            completed;
@@ -83,20 +84,23 @@ uint64_t pt_lifecycle_on_signal(pt_lifecycle_tracker_t *t,
 void pt_lifecycle_on_order(pt_lifecycle_tracker_t *t, uint64_t signal_id,
                            pt_order_id_t oid, double quoted_edge);
 
+/* Forward declaration */
+typedef struct pt_adverse_tracker_s pt_adverse_tracker_t;
+
 /* Track fill event */
 void pt_lifecycle_on_fill(pt_lifecycle_tracker_t *t, uint64_t signal_id,
                           pt_size_t fill_qty, pt_price_t fill_price,
                           double filled_edge, double latency_ms,
                           double fees, double rebates, double slippage,
-                          double adverse_selection);
+                          uint64_t fill_id);
 
 /* Finalize opportunity trade record */
 void pt_lifecycle_on_complete(pt_lifecycle_tracker_t *t, uint64_t signal_id,
                               double realized_pnl, double hedge_cost,
                               double realized_edge);
 
-/* Recompute averages */
-void pt_lifecycle_compute_stats(pt_lifecycle_tracker_t *t);
+/* Recompute averages using measured per-fill adverse selection trajectories */
+void pt_lifecycle_compute_stats(pt_lifecycle_tracker_t *t, const pt_adverse_tracker_t *adv);
 
 #ifdef __cplusplus
 }

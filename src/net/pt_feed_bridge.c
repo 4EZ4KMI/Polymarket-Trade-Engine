@@ -212,20 +212,23 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
     pt_market_resolution_msg_t res;
     if (pt_parse_market_resolution_msg(line, len, &res)) {
         b->total_resolution_events++;
+        int winner = -1;
+        int res_rc = -1;
         if (b->registry) {
-            pt_market_registry_resolve(b->registry, res.condition_id, res.market_id,
-                                       res.winning_is_yes, res.resolution_price, now);
+            res_rc = pt_market_registry_resolve_verified(b->registry, res.condition_id, res.market_id,
+                                                         res.winning_asset_id, res.winning_outcome,
+                                                         res.resolution_price, now, &winner);
         }
-        if (b->portfolio) {
+        if (res_rc == 0 && winner >= 0 && b->portfolio) {
             pt_market_id_t mid = res.market_id;
             if (mid == 0 && b->registry) {
                 pt_market_entry_t *m = pt_market_registry_find_by_condition(b->registry, res.condition_id);
                 if (m) mid = m->market_id;
             }
             if (mid > 0) {
-                pt_portfolio_settle_market(b->portfolio, mid, res.winning_is_yes, b->stats, b->lifecycle);
-                printf("[RESOLUTION] Real market resolved: ID=%llu Winner=%s Price=%.2f\n",
-                       (unsigned long long)mid, res.winning_is_yes ? "YES" : "NO", res.resolution_price);
+                pt_portfolio_settle_market(b->portfolio, mid, winner, b->stats, b->lifecycle);
+                printf("[RESOLUTION] Real market verified & settled: ID=%llu Winner=%s Price=%.2f\n",
+                       (unsigned long long)mid, winner ? "YES" : "NO", res.resolution_price);
             }
         }
         return;
@@ -291,7 +294,81 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
         return;
     }
 
-    /* 5. Polymarket Real Book Messages */
+    /* 5. Polymarket Native Book Snapshot Messages */
+    pt_poly_book_snap_t snap;
+    if (pt_parse_polymarket_book_snap(line, len, &snap)) {
+        b->total_poly_events++;
+        if (b->telemetry) b->telemetry->poly_events_total++;
+        if (b->risk) pt_risk_feed_touch_poly(b->risk, now);
+
+        int is_yes = 0;
+        pt_market_entry_t *m = NULL;
+        if (b->registry) {
+            m = pt_market_registry_find_by_token(b->registry, snap.asset_id, &is_yes);
+            if (!m) {
+                /* STRICT FAIL-CLOSED: Unknown token ID -> DROP EVENT! No guessing, no fallback! */
+                return;
+            }
+            pt_market_registry_on_snapshot(b->registry, m->market_id, now);
+        } else {
+            return;
+        }
+
+        pt_book_t *target = is_yes ? b->yes_book : b->no_book;
+        if (target) {
+            pt_book_snapshot(target, PT_SIDE_BID, snap.bids, snap.bid_count, 1);
+            pt_book_snapshot(target, PT_SIDE_ASK, snap.asks, snap.ask_count, 1);
+
+            if (b->adverse) {
+                pt_price_t mid_p = pt_book_calc_mid(target);
+                if (mid_p > 0) {
+                    pt_adverse_tracker_on_price(b->adverse, m->market_id, is_yes, mid_p, now);
+                }
+            }
+        }
+        return;
+    }
+
+    /* 6. Polymarket Native Price Changes Delta Messages */
+    pt_poly_price_changes_t pcs;
+    if (pt_parse_polymarket_price_changes(line, len, &pcs)) {
+        b->total_poly_events++;
+        if (b->telemetry) b->telemetry->poly_events_total++;
+        if (b->risk) pt_risk_feed_touch_poly(b->risk, now);
+
+        for (int i = 0; i < pcs.count; i++) {
+            pt_poly_price_change_entry_t *ch = &pcs.changes[i];
+            int is_yes = 0;
+            pt_market_entry_t *m = NULL;
+            if (b->registry) {
+                m = pt_market_registry_find_by_token(b->registry, ch->asset_id, &is_yes);
+                if (!m) continue;
+            } else {
+                continue;
+            }
+
+            pt_book_t *target = is_yes ? b->yes_book : b->no_book;
+            if (target) {
+                int64_t old_size = (int64_t)pt_book_get_level_size(target, ch->side, ch->price);
+                pt_book_update(target, ch->side, ch->price, (int64_t)ch->size, 0, 1);
+
+                if (b->broker) {
+                    pt_broker_on_level_change(b->broker, m->market_id, is_yes, ch->side,
+                                              ch->price, old_size, (int64_t)ch->size, now);
+                }
+
+                if (b->adverse) {
+                    pt_price_t mid_p = pt_book_calc_mid(target);
+                    if (mid_p > 0) {
+                        pt_adverse_tracker_on_price(b->adverse, m->market_id, is_yes, mid_p, now);
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    /* 7. Polymarket Legacy Book Messages */
     pt_poly_delta_t pd;
     if (pt_parse_polymarket_book_msg(line, len, &pd)) {
         b->total_poly_events++;

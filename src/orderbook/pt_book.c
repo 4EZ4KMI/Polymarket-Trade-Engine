@@ -1,10 +1,20 @@
 #include "orderbook/pt_book.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 
 void pt_book_init(pt_book_t *b)
 {
     memset(b, 0, sizeof(*b));
+}
+
+static int compare_book_levels_asc_(const void *a, const void *b)
+{
+    const pt_level_t *la = (const pt_level_t *)a;
+    const pt_level_t *lb = (const pt_level_t *)b;
+    if (la->price < lb->price) return -1;
+    if (la->price > lb->price) return 1;
+    return 0;
 }
 
 /* find insertion index for ascending price; sets exact=1 if present */
@@ -79,6 +89,9 @@ int pt_book_snapshot(pt_book_t *b, int side, const pt_level_t *levels, int n,
             if (levels[i].size == 0)
                 continue;
             s->levels[s->count++] = levels[i];
+        }
+        if (s->count > 1) {
+            qsort(s->levels, s->count, sizeof(pt_level_t), compare_book_levels_asc_);
         }
     }
     if (seq > b->seq)

@@ -242,8 +242,8 @@ PT_T(feed_bridge_to_broker_to_stats_e2e)
     pt_feed_bridge_init(&fb, NULL, 9991, &yes_book, &no_book, NULL, NULL, NULL, NULL, NULL,
                         &reg, &portf, &broker, &stats, NULL, NULL);
 
-    /* Step 1: Initialize book level at 490 with 500 shares */
-    const char *book_json = "{\"event_type\":\"book\",\"asset_id\":\"TOKEN_YES_101\",\"side\":\"BID\",\"price\":\"0.490\",\"size\":\"500\",\"timestamp\":1000}\n";
+    /* Step 1: Initialize book with native Polymarket snapshot (BID 490 @ 500) */
+    const char *book_json = "{\"event_type\":\"book\",\"asset_id\":\"TOKEN_YES_101\",\"market\":\"btc-test\",\"timestamp\":1000,\"hash\":\"0xabc\",\"bids\":[{\"price\":\"0.490\",\"size\":\"500\"}],\"asks\":[{\"price\":\"0.510\",\"size\":\"400\"}]}\n";
     pt_feed_bridge_on_line(&fb, book_json, strlen(book_json), 1000);
     pt_price_t best_bid_p = 0; pt_size_t best_bid_s = 0;
     PT_ASSERT(pt_book_best_bid(&yes_book, &best_bid_p, &best_bid_s) == 0);
@@ -295,9 +295,9 @@ PT_T(feed_bridge_to_broker_to_stats_e2e)
     PT_ASSERT(portf.positions[0].cost_basis_scaled == 100 * 490);
     PT_ASSERT(stats.strat_a.fills == 1);
 
-    /* Step 5: Test book delta level cancellation */
+    /* Step 5: Test native price_change delta level cancellation */
     /* Book level shrinks from 500 to 200 -> delta reduction updates queue_ahead */
-    const char *book_delta_json = "{\"event_type\":\"book\",\"asset_id\":\"TOKEN_YES_101\",\"side\":\"BID\",\"price\":\"0.490\",\"size\":\"200\",\"timestamp\":4000}\n";
+    const char *book_delta_json = "{\"event_type\":\"price_change\",\"market\":\"btc-test\",\"timestamp\":4000,\"price_changes\":[{\"asset_id\":\"TOKEN_YES_101\",\"side\":\"BUY\",\"price\":\"0.490\",\"size\":\"200\",\"hash\":\"0xdef\",\"best_bid\":\"0.49\",\"best_ask\":\"0.51\"}]}\n";
     pt_feed_bridge_on_line(&fb, book_delta_json, strlen(book_delta_json), 4000);
     PT_ASSERT(pt_book_get_level_size(&yes_book, PT_SIDE_BID, 490) == 200);
 

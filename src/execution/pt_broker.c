@@ -83,7 +83,7 @@ static void on_sim_fill_(pt_order_t *o, pt_size_t fill_qty, pt_price_t fill_pric
 
     if (ctx->user_cb) {
         ctx->user_cb(o->id, ctx->market_id, o->is_yes, o->side,
-                     fill_qty, fill_price, 0.0, ctx->user_ud);
+                     fill_qty, fill_price, o->strategy, ctx->user_ud);
     }
 }
 

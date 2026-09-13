@@ -37,6 +37,16 @@ export interface Telemetry {
   latency_e2e_max_us: number;
 }
 
+export interface StrategyStat {
+  signals: number;
+  would_trade: number;
+  fills: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  realized_pnl: number;
+}
+
 export interface ExecutionAnalytics {
   expected_edge_avg: number;
   executable_edge_avg: number;
@@ -49,4 +59,7 @@ export interface ExecutionAnalytics {
   calibration_error: number;
   profit_factor: number;
   sharpe: number;
+  total_trades?: number;
+  strat_a?: StrategyStat;
+  strat_b?: StrategyStat;
 }

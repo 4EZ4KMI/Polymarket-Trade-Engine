@@ -7,23 +7,25 @@
 #include "telemetry/pt_telemetry.h"
 #include "risk/pt_risk.h"
 #include "orderbook/pt_book.h"
+#include "analytics/pt_strategy_stats.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct {
-    int               server_fd;
-    int               port;
-    pt_reactor_t     *reactor;
-    pt_portfolio_t   *portfolio;
-    pt_telemetry_t   *telemetry;
-    pt_risk_engine_t *risk;
-    const pt_book_t  *yes_book;
-    const pt_book_t  *no_book;
-    double            btc_mid;
-    pt_mode_t         mode;
-    pt_nsec_t         start_time_ns;
+    int                          server_fd;
+    int                          port;
+    pt_reactor_t                *reactor;
+    pt_portfolio_t              *portfolio;
+    pt_telemetry_t              *telemetry;
+    pt_risk_engine_t            *risk;
+    const pt_book_t             *yes_book;
+    const pt_book_t             *no_book;
+    pt_strategy_stats_tracker_t *stats;
+    double                       btc_mid;
+    pt_mode_t                    mode;
+    pt_nsec_t                    start_time_ns;
 } pt_http_server_t;
 
 int  pt_http_server_init(pt_http_server_t *s, int port, pt_reactor_t *reactor,
@@ -31,6 +33,7 @@ int  pt_http_server_init(pt_http_server_t *s, int port, pt_reactor_t *reactor,
                          pt_risk_engine_t *risk, const pt_book_t *yes_book,
                          const pt_book_t *no_book, pt_mode_t mode);
 
+void pt_http_server_set_stats(pt_http_server_t *s, pt_strategy_stats_tracker_t *stats);
 void pt_http_server_stop(pt_http_server_t *s);
 void pt_http_server_update_btc(pt_http_server_t *s, double btc_mid);
 

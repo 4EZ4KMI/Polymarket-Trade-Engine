@@ -109,10 +109,14 @@ static void handle_client_(int cfd, int events, void *ud)
         send_response_(cfd, 200, "OK", "application/json", body);
     }
     else if (strncmp(buf, "GET /api/analytics", 18) == 0) {
-        snprintf(body, sizeof(body),
-            "{\"expected_edge_avg\":0.0125,\"executable_edge_avg\":0.0092,\"realized_edge_avg\":0.0078,"
-            "\"fill_ratio\":0.875,\"adverse_selection_bps\":2.1,\"avg_slippage_bps\":0.8,\"avg_queue_ahead\":350,"
-            "\"brier_score\":0.182,\"calibration_error\":0.042,\"profit_factor\":2.35,\"sharpe\":2.84}");
+        if (s->stats) {
+            pt_strat_stats_json_analytics(s->stats, body, sizeof(body));
+        } else {
+            snprintf(body, sizeof(body),
+                "{\"expected_edge_avg\":0.0,\"executable_edge_avg\":0.0,\"realized_edge_avg\":0.0,"
+                "\"fill_ratio\":0.0,\"adverse_selection_bps\":0.0,\"avg_slippage_bps\":0.0,\"avg_queue_ahead\":0,"
+                "\"brier_score\":0.0,\"calibration_error\":0.0,\"profit_factor\":0.0,\"sharpe\":0.0,\"total_trades\":0}");
+        }
         send_response_(cfd, 200, "OK", "application/json", body);
     }
     else if (strncmp(buf, "POST /api/kill", 14) == 0) {
@@ -199,4 +203,8 @@ void pt_http_server_stop(pt_http_server_t *s)
 void pt_http_server_update_btc(pt_http_server_t *s, double btc_mid)
 {
     if (s) s->btc_mid = btc_mid;
+}
+void pt_http_server_set_stats(pt_http_server_t *s, pt_strategy_stats_tracker_t *stats)
+{
+    if (s) s->stats = stats;
 }

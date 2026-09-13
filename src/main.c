@@ -15,13 +15,13 @@
 #include "storage/pt_csv_log.h"
 #include "analytics/pt_calibration.h"
 #include "analytics/pt_lifecycle_tracker.h"
+#include "analytics/pt_strategy_stats.h"
 #include "analytics/pt_metrics.h"
 #include "telemetry/pt_telemetry.h"
 #include "net/pt_reactor.h"
 #include "net/pt_http_server.h"
 #include "net/pt_feed_bridge.h"
 #include "storage/pt_dataset.h"
-
 
 #include <signal.h>
 #include <stdio.h>
@@ -31,6 +31,29 @@
 
 static volatile int g_running = 1;
 static void sig_handler(int sig) { (void)sig; g_running = 0; }
+
+typedef struct {
+    pt_strategy_stats_tracker_t *stats;
+    pt_csv_logger_t             *csv_log;
+    pt_telemetry_t              *telemetry;
+} engine_fill_ctx_t;
+
+static void on_engine_fill_(pt_order_id_t oid, pt_market_id_t market_id,
+                            int is_yes, int side, pt_size_t filled_shares,
+                            pt_price_t fill_price, int strategy, void *ud)
+{
+    engine_fill_ctx_t *ctx = (engine_fill_ctx_t *)ud;
+    if (!ctx) return;
+
+    double p = (double)fill_price / PT_PRICE_SCALE;
+    double fee = p * (double)filled_shares * 0.001; /* 10 bps fee */
+    pt_strat_stats_record_fill(ctx->stats, strategy, p, filled_shares, 0.5, fee, 0.0, 15.0);
+
+    if (ctx->csv_log) {
+        pt_csv_log_trade(ctx->csv_log, pt_clock_mono_ns(), oid, market_id,
+                         strategy, is_yes, side, fill_price, filled_shares, fee, 0.0);
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -116,6 +139,9 @@ int main(int argc, char **argv)
     pt_lifecycle_tracker_t lc_tracker;
     pt_lifecycle_tracker_init(&lc_tracker);
 
+    pt_strategy_stats_tracker_t strat_stats;
+    pt_strat_stats_init(&strat_stats, &calibration, &lc_tracker, &portfolio, "data/strategy_stats.json");
+
     pt_telemetry_t telemetry;
     pt_telemetry_init(&telemetry);
 
@@ -135,8 +161,16 @@ int main(int argc, char **argv)
     if (pt_http_server_init(&http_server, port, &reactor, &portfolio,
                             &telemetry, &risk_engine, &yes_book,
                             &no_book, PT_MODE_PAPER) == 0) {
+        pt_http_server_set_stats(&http_server, &strat_stats);
         printf("[HTTP] Monitoring API listening on http://127.0.0.1:%d/api/status\n", port);
     }
+
+    engine_fill_ctx_t fill_ctx = {
+        .stats = &strat_stats,
+        .csv_log = &csv_log,
+        .telemetry = &telemetry
+    };
+
     uint64_t tick_count = 0;
     pt_nsec_t last_stat_print = pt_clock_mono_ns();
 
@@ -151,7 +185,17 @@ int main(int argc, char **argv)
         tick_count++;
         pt_http_server_update_btc(&http_server, btc_price);
 
-        pt_market_lifecycle_tick(&market_info, btc_price, t0, &portfolio);
+        if (pt_market_lifecycle_tick(&market_info, btc_price, t0, &portfolio)) {
+            int winning_is_yes = (btc_price >= market_info.strike_price) ? 1 : 0;
+            printf("[SETTLEMENT] Market #%lu expired! Strike: %.2f | Final BTC: %.2f | Winner: %s | PnL: $%.2f\n",
+                   (unsigned long)market_info.market_id, market_info.strike_price, btc_price,
+                   winning_is_yes ? "YES" : "NO", portfolio.realized_pnl);
+            pt_calibration_compute(&calibration);
+            pt_strat_stats_save(&strat_stats, "data/strategy_stats.json");
+            pt_market_info_init(&market_info, market_info.market_id + 1, "BTC-5M-LIVE",
+                                btc_price, t0, t0 + 300000000000ULL, 10.0);
+        }
+
         int can_trade = pt_market_can_trade(&market_info, t0);
         double tte = pt_market_time_to_expiry_sec(&market_info, t0);
 
@@ -188,7 +232,10 @@ int main(int argc, char **argv)
             pt_size_t approved = 0;
             double exp = pt_portfolio_market_exposure(&portfolio, 101);
             int rej = pt_risk_evaluate_signal(&risk_engine, &sig, exp, t0, &approved);
-            if (rej == PT_REJECT_NONE && approved > 0) {
+            int is_approved = (rej == PT_REJECT_NONE && approved > 0);
+            pt_strat_stats_record_signal(&strat_stats, PT_STRAT_PARITY5M, is_approved, 1, arb_opp.net_edge);
+
+            if (is_approved) {
                 pt_arb_op_t op;
                 int op_idx = pt_arb_mgr_open(&arb_mgr, &arb_opp, &op, 0, t0);
                 if (op_idx >= 0) {
@@ -203,6 +250,7 @@ int main(int argc, char **argv)
                     arb_mgr.ops[op_idx].yes_oid = y_oid;
                     arb_mgr.ops[op_idx].no_oid  = n_oid;
                     telemetry.orders_submitted += 2;
+                    pt_strat_stats_record_order(&strat_stats, PT_STRAT_PARITY5M);
                 }
             } else {
                 pt_csv_log_rejection(&csv_log, t0, sig.signal_id, pt_risk_reject_str(rej), (double)rej);
@@ -238,17 +286,21 @@ int main(int argc, char **argv)
             pt_size_t approved = 0;
             double exp = pt_portfolio_market_exposure(&portfolio, 101);
             int rej = pt_risk_evaluate_signal(&risk_engine, &sig, exp, t0, &approved);
-            if (rej == PT_REJECT_NONE && approved > 0) {
+            int is_approved = (rej == PT_REJECT_NONE && approved > 0);
+            pt_strat_stats_record_signal(&strat_stats, PT_STRAT_FLOW15M, is_approved, 1, skew_sig.executable_edge);
+
+            if (is_approved) {
                 pt_broker_submit(&broker, 101, sig.is_yes, PT_SIDE_BID,
                                  sig.target_price, approved,
                                  sig.is_yes ? &yes_book : &no_book,
                                  PT_STRAT_FLOW15M, t0);
                 telemetry.orders_submitted++;
+                pt_strat_stats_record_order(&strat_stats, PT_STRAT_FLOW15M);
             }
         }
 
-        /* Broker tick evaluates matching engine queues */
-        int fills = pt_broker_tick(&broker, 101, &yes_book, &no_book, t0, NULL, NULL);
+        /* Broker tick evaluates matching engine queues with realistic fills */
+        int fills = pt_broker_tick(&broker, 101, &yes_book, &no_book, t0, on_engine_fill_, &fill_ctx);
         if (fills > 0) telemetry.orders_filled += fills;
 
         /* Unhedged exposure manager tick */
@@ -270,18 +322,27 @@ int main(int argc, char **argv)
 
         if (t1 - last_stat_print >= 3000000000ULL) {
             last_stat_print = t1;
-            printf("[STATUS] ticks=%llu | BTC=%.1f | Cash=$%.2f | Equity=$%.2f | Trades=%llu | WinRate=%.1f%% | p50=%.1fus\n",
-                   (unsigned long long)tick_count,
+            double a_wr = (strat_stats.strat_a.trades_won + strat_stats.strat_a.trades_lost > 0) ?
+                (double)strat_stats.strat_a.trades_won * 100.0 / (double)(strat_stats.strat_a.trades_won + strat_stats.strat_a.trades_lost) : 0.0;
+            double b_wr = (strat_stats.strat_b.trades_won + strat_stats.strat_b.trades_lost > 0) ?
+                (double)strat_stats.strat_b.trades_won * 100.0 / (double)(strat_stats.strat_b.trades_won + strat_stats.strat_b.trades_lost) : 0.0;
+
+            printf("[STATUS] BTC=%.1f | StratA: %llu sigs / %llu fills (WR: %.1f%%) | StratB: %llu sigs / %llu fills (WR: %.1f%%) | Cash=$%.2f | PnL=$%.2f | p50=%.1fus\n",
                    btc_price,
+                   (unsigned long long)strat_stats.strat_a.signals_total,
+                   (unsigned long long)strat_stats.strat_a.orders_filled,
+                   a_wr,
+                   (unsigned long long)strat_stats.strat_b.signals_total,
+                   (unsigned long long)strat_stats.strat_b.orders_filled,
+                   b_wr,
                    portfolio.cash,
-                   pt_portfolio_equity(&portfolio),
-                   (unsigned long long)portfolio.trades_count,
-                   pt_portfolio_win_rate(&portfolio) * 100.0,
+                   portfolio.realized_pnl,
                    pt_telemetry_percentile_us(&telemetry.e2e_latency, 50.0));
         }
     }
 
     printf("\n[ENGINE] Shutting down...\n");
+    pt_strat_stats_save(&strat_stats, "data/strategy_stats.json");
     pt_feed_bridge_close(&feed_bridge);
     pt_dataset_writer_close(&dataset_writer);
 

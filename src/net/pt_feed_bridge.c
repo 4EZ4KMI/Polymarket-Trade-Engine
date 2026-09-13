@@ -37,7 +37,7 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
                         pt_lifecycle_tracker_t *lifecycle,
                         pt_adverse_tracker_t *adverse)
 {
-    if (!b || !reactor) return -1;
+    if (!b) return -1;
     memset(b, 0, sizeof(*b));
     b->reactor = reactor;
     b->yes_book = yes_book;
@@ -53,7 +53,12 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
     b->stats = stats;
     b->lifecycle = lifecycle;
     b->adverse = adverse;
+    b->listen_fd = -1;
     b->client_fd = -1;
+
+    if (!reactor || tcp_port <= 0) {
+        return 0;
+    }
 
     b->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (b->listen_fd < 0) return -1;
@@ -89,12 +94,12 @@ void pt_feed_bridge_close(pt_feed_bridge_t *b)
 {
     if (!b) return;
     if (b->client_fd >= 0) {
-        pt_reactor_del(b->reactor, b->client_fd);
+        if (b->reactor) pt_reactor_del(b->reactor, b->client_fd);
         close(b->client_fd);
         b->client_fd = -1;
     }
     if (b->listen_fd >= 0) {
-        pt_reactor_del(b->reactor, b->listen_fd);
+        if (b->reactor) pt_reactor_del(b->reactor, b->listen_fd);
         close(b->listen_fd);
         b->listen_fd = -1;
     }

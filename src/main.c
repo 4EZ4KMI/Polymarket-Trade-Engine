@@ -59,8 +59,9 @@ static void on_engine_fill_(const pt_order_t *order, pt_size_t filled_shares,
     double rebate = 0.0;
 
     if (ctx->stats) {
+        int is_part = (order->state == PT_OSTATE_PARTIAL);
         pt_strat_stats_record_fill(ctx->stats, order->strategy, fill_p, filled_shares,
-                                   slippage_bps, fee, rebate, latency_ms, order->queue_ahead_at_submit);
+                                   slippage_bps, fee, rebate, latency_ms, is_part);
     }
 
     uint64_t fill_id = 0;

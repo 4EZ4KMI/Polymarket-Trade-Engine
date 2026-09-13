@@ -4,6 +4,10 @@
 #include "analytics/pt_lifecycle_tracker.h"
 #include "analytics/pt_adverse_selection.h"
 #include "portfolio/pt_portfolio.h"
+#include "net/pt_feed_bridge.h"
+#include "execution/pt_broker.h"
+#include "core/pt_market_registry.h"
+#include "orderbook/pt_book.h"
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -193,6 +197,112 @@ PT_T(real_sharpe_calculation)
     sharpe = pt_strat_stats_calc_sharpe(&st, &has_sharpe);
     PT_ASSERT(has_sharpe == 1);
     PT_ASSERT(sharpe > 0.0);
+}
+
+static void test_engine_fill_cb_(const pt_order_t *o, pt_size_t filled_shares,
+                                 pt_price_t fill_price, void *ud)
+{
+    pt_strategy_stats_tracker_t *stats = (pt_strategy_stats_tracker_t *)ud;
+    if (stats && o) {
+        double fill_p = (double)fill_price / PT_PRICE_SCALE;
+        int is_part = (o->state == PT_OSTATE_PARTIAL);
+        pt_strat_stats_record_fill(stats, o->strategy, fill_p, filled_shares, 0.0, 0.0, 0.0, 0.5, is_part);
+    }
+}
+
+PT_T(feed_bridge_to_broker_to_stats_e2e)
+{
+    pt_market_registry_t reg;
+    pt_market_registry_init(&reg);
+
+    pt_market_registry_add(&reg, 101, "0x12345", "btc-test", "TOKEN_YES_101", "TOKEN_NO_101",
+                           88000.0, 1000000000ULL, 2000000000ULL, 1000);
+
+    pt_book_t yes_book, no_book;
+    pt_book_init(&yes_book);
+    pt_book_init(&no_book);
+
+    pt_portfolio_t portf;
+    pt_portfolio_init(&portf, 10000.0);
+
+    pt_broker_cfg_t bcfg = {
+        .latency_submit_ack_ms = 0.0,
+        .latency_ack_fill_ms = 0.0,
+        .latency_cancel_ms = 0.0,
+        .queue_model = PT_QUEUE_MODEL_REALISTIC
+    };
+    pt_broker_t broker;
+    pt_broker_init(&broker, &bcfg, &portf);
+
+    pt_strategy_stats_tracker_t stats;
+    pt_strat_stats_init(&stats, NULL, NULL, NULL, NULL, NULL);
+    pt_broker_set_fill_callback(&broker, test_engine_fill_cb_, &stats);
+
+    pt_feed_bridge_t fb;
+    pt_feed_bridge_init(&fb, NULL, 9991, &yes_book, &no_book, NULL, NULL, NULL, NULL, NULL,
+                        &reg, &portf, &broker, &stats, NULL, NULL);
+
+    /* Step 1: Initialize book level at 490 with 500 shares */
+    const char *book_json = "{\"event_type\":\"book\",\"asset_id\":\"TOKEN_YES_101\",\"side\":\"BID\",\"price\":\"0.490\",\"size\":\"500\",\"timestamp\":1000}\n";
+    pt_feed_bridge_on_line(&fb, book_json, strlen(book_json), 1000);
+    pt_price_t best_bid_p = 0; pt_size_t best_bid_s = 0;
+    PT_ASSERT(pt_book_best_bid(&yes_book, &best_bid_p, &best_bid_s) == 0);
+    PT_ASSERT(best_bid_p == 490);
+    PT_ASSERT(pt_book_get_level_size(&yes_book, PT_SIDE_BID, 490) == 500);
+
+    /* Step 2: Submit limit buy order of 100 shares behind 500 shares in queue */
+    pt_order_id_t oid = pt_broker_submit(&broker, 101, 1, PT_SIDE_BID, 490, 100, &yes_book, PT_STRAT_PARITY5M, 1000);
+    PT_ASSERT(oid > 0);
+    PT_ASSERT(broker.sim_queue.orders[0].queue_ahead == 500);
+    PT_ASSERT(stats.strat_a.fills == 0);
+    PT_ASSERT(portf.position_count == 0);
+
+    /* Step 3: Stream Polymarket real trade for 300 shares -> depletes queue ahead to 200, no fill yet */
+    const char *tr1_json = "{\"event_type\":\"trade\",\"asset_id\":\"TOKEN_YES_101\",\"side\":\"SELL\",\"price\":\"0.490\",\"size\":\"300\",\"timestamp\":2000}\n";
+    pt_feed_bridge_on_line(&fb, tr1_json, strlen(tr1_json), 2000);
+    PT_ASSERT(broker.sim_queue.orders[0].queue_ahead == 200);
+    PT_ASSERT(stats.strat_a.fills == 0);
+    PT_ASSERT(portf.position_count == 0);
+
+    /* Step 4: Stream Polymarket real trade for 250 shares -> exhausts remaining 200 ahead + fills 50 of our order! */
+    const char *tr2_json = "{\"event_type\":\"trade\",\"asset_id\":\"TOKEN_YES_101\",\"side\":\"SELL\",\"price\":\"0.490\",\"size\":\"250\",\"timestamp\":3000}\n";
+    pt_feed_bridge_on_line(&fb, tr2_json, strlen(tr2_json), 3000);
+
+    /* Verify fill propagation through the entire pipeline: */
+    /* a) Sim queue state */
+    PT_ASSERT(broker.sim_queue.orders[0].queue_ahead == 0);
+    PT_ASSERT(broker.sim_queue.orders[0].state == PT_OSTATE_PARTIAL);
+    PT_ASSERT(broker.sim_queue.orders[0].remaining_size == 50);
+
+    /* b) Portfolio fill & cost deduction */
+    PT_ASSERT(portf.position_count == 1);
+    PT_ASSERT(portf.positions[0].market_id == 101);
+    PT_ASSERT(portf.positions[0].shares == 50);
+    PT_ASSERT(portf.positions[0].cost_basis_scaled == 50 * 490);
+
+    /* c) Strategy statistics partial fill recording */
+    int is_part = (broker.sim_queue.orders[0].state == PT_OSTATE_PARTIAL);
+    PT_ASSERT(is_part == 1);
+    PT_ASSERT(stats.strat_a.partial_fills == 1);
+    PT_ASSERT(stats.strat_a.fills == 0);
+
+    /* Step 4b: Stream another trade for 50 shares -> completes remaining 50 shares! */
+    const char *tr3_json = "{\"event_type\":\"trade\",\"asset_id\":\"TOKEN_YES_101\",\"side\":\"SELL\",\"price\":\"0.490\",\"size\":\"50\",\"timestamp\":3500}\n";
+    pt_feed_bridge_on_line(&fb, tr3_json, strlen(tr3_json), 3500);
+    PT_ASSERT(broker.sim_queue.orders[0].state == PT_OSTATE_FILLED);
+    PT_ASSERT(broker.sim_queue.orders[0].remaining_size == 0);
+    PT_ASSERT(portf.positions[0].shares == 100);
+    PT_ASSERT(portf.positions[0].cost_basis_scaled == 100 * 490);
+    PT_ASSERT(stats.strat_a.fills == 1);
+
+    /* Step 5: Test book delta level cancellation */
+    /* Book level shrinks from 500 to 200 -> delta reduction updates queue_ahead */
+    const char *book_delta_json = "{\"event_type\":\"book\",\"asset_id\":\"TOKEN_YES_101\",\"side\":\"BID\",\"price\":\"0.490\",\"size\":\"200\",\"timestamp\":4000}\n";
+    pt_feed_bridge_on_line(&fb, book_delta_json, strlen(book_delta_json), 4000);
+    PT_ASSERT(pt_book_get_level_size(&yes_book, PT_SIDE_BID, 490) == 200);
+
+    /* Clean up */
+    pt_feed_bridge_close(&fb);
 }
 
 

@@ -8,13 +8,20 @@ void pt_broker_init(pt_broker_t *b, const pt_broker_cfg_t *cfg, pt_portfolio_t *
     if (cfg) b->cfg = *cfg;
     b->portfolio = port;
 
-    pt_sim_queue_cfg_t scfg = {
-        .net_latency_ms = b->cfg.latency_submit_ack_ms > 0 ? b->cfg.latency_submit_ack_ms : 1.5,
-        .exchange_process_ms = b->cfg.latency_ack_fill_ms > 0 ? b->cfg.latency_ack_fill_ms : 1.0,
-        .cancel_latency_ms = b->cfg.latency_cancel_ms > 0 ? b->cfg.latency_cancel_ms : 1.5,
-        .queue_model = b->cfg.queue_model ? b->cfg.queue_model : PT_QUEUE_MODEL_REALISTIC,
-        .adverse_selection_bps = b->cfg.adverse_selection_bps > 0 ? b->cfg.adverse_selection_bps : 2.0
-    };
+    pt_sim_queue_cfg_t scfg;
+    if (cfg) {
+        scfg.net_latency_ms = cfg->latency_submit_ack_ms;
+        scfg.exchange_process_ms = cfg->latency_ack_fill_ms;
+        scfg.cancel_latency_ms = cfg->latency_cancel_ms;
+        scfg.queue_model = cfg->queue_model ? cfg->queue_model : PT_QUEUE_MODEL_REALISTIC;
+        scfg.adverse_selection_bps = cfg->adverse_selection_bps;
+    } else {
+        scfg.net_latency_ms = 1.5;
+        scfg.exchange_process_ms = 1.0;
+        scfg.cancel_latency_ms = 1.5;
+        scfg.queue_model = PT_QUEUE_MODEL_REALISTIC;
+        scfg.adverse_selection_bps = 2.0;
+    }
     pt_sim_queue_init(&b->sim_queue, &scfg);
 }
 

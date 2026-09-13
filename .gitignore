@@ -1,0 +1,10 @@
+__pycache__/
+build/
+*.o
+*.a
+node_modules/
+dashboard/.next/
+.env
+*.db
+logs/
+data/

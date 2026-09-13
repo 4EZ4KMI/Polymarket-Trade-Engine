@@ -5,6 +5,11 @@ export interface EngineStatus {
   kill_switch_tripped: number;
   kill_reason: string;
   btc_price: number;
+  market_status?: string;
+  market_slug?: string;
+  condition_id?: string;
+  strike?: number;
+  has_live_market?: number;
 }
 
 export interface Portfolio {
@@ -40,11 +45,24 @@ export interface Telemetry {
 export interface StrategyStat {
   signals: number;
   would_trade: number;
+  risk_approved: number;
+  orders_submitted: number;
   fills: number;
+  partial_fills: number;
+  cancelled: number;
   wins: number;
   losses: number;
   win_rate: number;
+  gross_profit: number;
+  gross_loss: number;
   realized_pnl: number;
+  fees: number;
+  rebates: number;
+  net_pnl: number;
+  average_expected_edge: number;
+  average_executable_edge: number;
+  average_realized_edge: number;
+  fill_rate: number;
 }
 
 export interface ExecutionAnalytics {
@@ -59,7 +77,9 @@ export interface ExecutionAnalytics {
   calibration_error: number;
   profit_factor: number;
   sharpe: number;
+  has_sharpe?: number;
   total_trades?: number;
   strat_a?: StrategyStat;
   strat_b?: StrategyStat;
 }
+

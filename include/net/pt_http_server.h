@@ -8,6 +8,7 @@
 #include "risk/pt_risk.h"
 #include "orderbook/pt_book.h"
 #include "analytics/pt_strategy_stats.h"
+#include "core/pt_market_registry.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +24,7 @@ typedef struct {
     const pt_book_t             *yes_book;
     const pt_book_t             *no_book;
     pt_strategy_stats_tracker_t *stats;
+    pt_market_registry_t        *registry;
     double                       btc_mid;
     pt_mode_t                    mode;
     pt_nsec_t                    start_time_ns;
@@ -34,6 +36,7 @@ int  pt_http_server_init(pt_http_server_t *s, int port, pt_reactor_t *reactor,
                          const pt_book_t *no_book, pt_mode_t mode);
 
 void pt_http_server_set_stats(pt_http_server_t *s, pt_strategy_stats_tracker_t *stats);
+void pt_http_server_set_registry(pt_http_server_t *s, pt_market_registry_t *registry);
 void pt_http_server_stop(pt_http_server_t *s);
 void pt_http_server_update_btc(pt_http_server_t *s, double btc_mid);
 

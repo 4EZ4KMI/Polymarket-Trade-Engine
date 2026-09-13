@@ -14,6 +14,7 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
   const stratA = analytics?.strat_a;
   const stratB = analytics?.strat_b;
   const totalTrades = analytics?.total_trades ?? 0;
+  const hasSharpe = (analytics?.has_sharpe ?? 0) === 1;
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
@@ -38,7 +39,7 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
               <Cpu className="w-4 h-4" /> Strategy A (5m Parity)
             </span>
             <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800/60">
-              {stratA?.fills ?? 0} fills / {stratA?.signals ?? 0} sigs
+              {stratA?.fills ?? 0} fills / {stratA?.orders_submitted ?? 0} ords ({stratA?.signals ?? 0} sigs)
             </span>
           </div>
           <div className="grid grid-cols-3 gap-2 pt-2">
@@ -54,14 +55,14 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
               <div className="text-base font-mono font-bold text-slate-200">
                 {stratA?.would_trade ?? 0}
               </div>
-              <div className="text-[10px] text-slate-500">Evaluated</div>
+              <div className="text-[10px] text-slate-500">Approved: {stratA?.risk_approved ?? 0}</div>
             </div>
             <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800/80">
-              <div className="text-[10px] text-slate-400 uppercase">PnL (USDC)</div>
-              <div className={`text-base font-mono font-bold ${(stratA?.realized_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                ${(stratA?.realized_pnl ?? 0.0).toFixed(2)}
+              <div className="text-[10px] text-slate-400 uppercase">Net PnL</div>
+              <div className={`text-base font-mono font-bold ${(stratA?.net_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                ${(stratA?.net_pnl ?? 0.0).toFixed(2)}
               </div>
-              <div className="text-[10px] text-slate-500">Realized</div>
+              <div className="text-[10px] text-slate-500">Fees: ${(stratA?.fees ?? 0.0).toFixed(2)}</div>
             </div>
           </div>
         </div>
@@ -73,7 +74,7 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
               <Activity className="w-4 h-4" /> Strategy B (15m Flow Skew)
             </span>
             <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800/60">
-              {stratB?.fills ?? 0} fills / {stratB?.signals ?? 0} sigs
+              {stratB?.fills ?? 0} fills / {stratB?.orders_submitted ?? 0} ords ({stratB?.signals ?? 0} sigs)
             </span>
           </div>
           <div className="grid grid-cols-3 gap-2 pt-2">
@@ -89,14 +90,14 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
               <div className="text-base font-mono font-bold text-slate-200">
                 {stratB?.would_trade ?? 0}
               </div>
-              <div className="text-[10px] text-slate-500">Evaluated</div>
+              <div className="text-[10px] text-slate-500">Approved: {stratB?.risk_approved ?? 0}</div>
             </div>
             <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800/80">
-              <div className="text-[10px] text-slate-400 uppercase">PnL (USDC)</div>
-              <div className={`text-base font-mono font-bold ${(stratB?.realized_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                ${(stratB?.realized_pnl ?? 0.0).toFixed(2)}
+              <div className="text-[10px] text-slate-400 uppercase">Net PnL</div>
+              <div className={`text-base font-mono font-bold ${(stratB?.net_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                ${(stratB?.net_pnl ?? 0.0).toFixed(2)}
               </div>
-              <div className="text-[10px] text-slate-500">Realized</div>
+              <div className="text-[10px] text-slate-500">Fees: ${(stratB?.fees ?? 0.0).toFixed(2)}</div>
             </div>
           </div>
         </div>
@@ -111,7 +112,7 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
           <div className="p-3 bg-slate-900/80 border border-slate-700/50 rounded-lg">
             <div className="text-xs text-slate-400 mb-1">Expected Edge</div>
             <div className="text-lg font-mono font-bold text-sky-400">
-              {hasData && expEdge > 0 ? `+${expEdge.toFixed(2)}%` : "0.00%"}
+              {hasData && expEdge > 0 ? `+${expEdge.toFixed(2)}%` : "--"}
             </div>
             <div className="text-[10px] text-slate-500 mt-1">Raw Model Output</div>
           </div>
@@ -123,7 +124,7 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
           <div className="p-3 bg-slate-900/80 border border-slate-700/50 rounded-lg">
             <div className="text-xs text-slate-400 mb-1">Executable Edge</div>
             <div className="text-lg font-mono font-bold text-amber-400">
-              {hasData && execEdge > 0 ? `+${execEdge.toFixed(2)}%` : "0.00%"}
+              {hasData && execEdge > 0 ? `+${execEdge.toFixed(2)}%` : "--"}
             </div>
             <div className="text-[10px] text-slate-500 mt-1">After Book Depth & Fees</div>
           </div>
@@ -135,7 +136,7 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
           <div className="p-3 bg-slate-900/80 border border-emerald-700/40 rounded-lg bg-emerald-950/20">
             <div className="text-xs text-emerald-300 mb-1">Realized Edge</div>
             <div className="text-lg font-mono font-bold text-emerald-400">
-              {hasData && realEdge !== 0 ? `${realEdge >= 0 ? "+" : ""}${realEdge.toFixed(2)}%` : "0.00%"}
+              {hasData && realEdge !== 0 ? `${realEdge >= 0 ? "+" : ""}${realEdge.toFixed(2)}%` : "--"}
             </div>
             <div className="text-[10px] text-emerald-500 mt-1">Post-Fill Settlement</div>
           </div>
@@ -147,25 +148,25 @@ export const ExecutionAnalyticsView: React.FC<Props> = ({ analytics }) => {
         <div className="p-4 bg-slate-950/60 border border-slate-800/80 rounded-xl">
           <div className="text-xs text-slate-400 mb-1">Fill Ratio</div>
           <div className="text-xl font-mono font-semibold text-slate-100">
-            {hasData ? `${((analytics?.fill_ratio ?? 0.0) * 100).toFixed(1)}%` : "0.0%"}
+            {hasData && (analytics?.fill_ratio ?? 0) > 0 ? `${((analytics?.fill_ratio ?? 0.0) * 100).toFixed(1)}%` : "--"}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">Simulated Queue Position</div>
+          <div className="text-[11px] text-slate-500 mt-1">Real Queue Fills</div>
         </div>
 
         <div className="p-4 bg-slate-950/60 border border-slate-800/80 rounded-xl">
           <div className="text-xs text-slate-400 mb-1">Adverse Selection</div>
           <div className="text-xl font-mono font-semibold text-rose-400">
-            {hasData ? `${(analytics?.adverse_selection_bps ?? 0.0).toFixed(1)} bps` : "0.0 bps"}
+            {hasData && (analytics?.adverse_selection_bps ?? 0) > 0 ? `${(analytics?.adverse_selection_bps ?? 0.0).toFixed(1)} bps` : "--"}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">Sweep Impact Decay</div>
+          <div className="text-[11px] text-slate-500 mt-1">Multi-Horizon Price Decay</div>
         </div>
 
         <div className="p-4 bg-slate-950/60 border border-slate-800/80 rounded-xl">
-          <div className="text-xs text-slate-400 mb-1">Brier Score</div>
+          <div className="text-xs text-slate-400 mb-1">Sharpe Ratio</div>
           <div className="text-xl font-mono font-semibold text-indigo-400">
-            {hasData && (analytics?.brier_score ?? 0.0) > 0 ? (analytics?.brier_score ?? 0.0).toFixed(3) : "--"}
+            {hasSharpe ? (analytics?.sharpe ?? 0.0).toFixed(2) : "--"}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">Probability Calibration</div>
+          <div className="text-[11px] text-slate-500 mt-1">{hasSharpe ? "Annualized Return/Risk" : "Needs >= 5 Settled Trades"}</div>
         </div>
 
         <div className="p-4 bg-slate-950/60 border border-slate-800/80 rounded-xl">

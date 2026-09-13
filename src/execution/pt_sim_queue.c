@@ -77,6 +77,12 @@ pt_order_id_t pt_sim_queue_submit(pt_sim_queue_t *sq, pt_market_id_t market_id,
     }
     o->queue_ahead = qahead;
     o->initial_queue = qahead;
+    o->queue_ahead_at_submit = qahead;
+    o->queue_ahead_after_updates = qahead;
+    o->consumed_volume = 0;
+    o->cancel_volume = 0;
+    o->fill_ratio = 0.0;
+    o->time_to_fill_ns = 0;
 
     return o->id;
 }
@@ -132,8 +138,10 @@ void pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
         if (interacts) {
             if (o->queue_ahead >= trade_size) {
                 o->queue_ahead -= trade_size;
+                o->consumed_volume += trade_size;
             } else {
                 pt_size_t excess_trade = trade_size - o->queue_ahead;
+                o->consumed_volume += o->queue_ahead;
                 o->queue_ahead = 0;
                 pt_size_t fill_qty = (excess_trade < o->remaining_size) ? excess_trade : o->remaining_size;
                 if (fill_qty > 0) {
@@ -142,6 +150,12 @@ void pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
                     o->cum_cost_scaled += (int64_t)fill_qty * (int64_t)o->price;
                     o->avg_fill_price = (pt_price_t)(o->cum_cost_scaled / o->filled_size);
                     o->last_update_t = now;
+                    if (o->original_size > 0) {
+                        o->fill_ratio = (double)o->filled_size / (double)o->original_size;
+                    }
+                    if (now >= o->submit_t) {
+                        o->time_to_fill_ns = now - o->submit_t;
+                    }
                     if (o->remaining_size == 0) {
                         o->state = PT_OSTATE_FILLED;
                     } else {
@@ -149,6 +163,7 @@ void pt_sim_queue_on_trade(pt_sim_queue_t *sq, pt_market_id_t market_id,
                     }
                 }
             }
+            o->queue_ahead_after_updates = o->queue_ahead;
         }
     }
 }
@@ -178,8 +193,10 @@ void pt_sim_queue_on_level_change(pt_sim_queue_t *sq, pt_market_id_t market_id,
             continue;
         } else if (sq->cfg.queue_model == PT_QUEUE_MODEL_AGGRESSIVE) {
             if ((pt_size_t)delta_reduction >= o->queue_ahead) {
+                o->cancel_volume += o->queue_ahead;
                 o->queue_ahead = 0;
             } else {
+                o->cancel_volume += (pt_size_t)delta_reduction;
                 o->queue_ahead -= (pt_size_t)delta_reduction;
             }
         } else {
@@ -187,9 +204,11 @@ void pt_sim_queue_on_level_change(pt_sim_queue_t *sq, pt_market_id_t market_id,
                 double prop = (double)o->queue_ahead / (double)old_size;
                 pt_size_t reduced = (pt_size_t)round((double)delta_reduction * prop);
                 if (reduced > o->queue_ahead) reduced = o->queue_ahead;
+                o->cancel_volume += reduced;
                 o->queue_ahead -= reduced;
             }
         }
+        o->queue_ahead_after_updates = o->queue_ahead;
     }
 }
 

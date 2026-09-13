@@ -34,6 +34,29 @@ typedef struct {
 int pt_parse_binance_trade(const char *msg, size_t len, pt_binance_trade_t *out);
 int pt_parse_binance_bookticker(const char *msg, size_t len, double *bid, double *ask, pt_nsec_t *ts_ns);
 
+/* --- Real Polymarket Discovery & Resolution messages --- */
+typedef struct {
+    uint64_t market_id;
+    char     condition_id[68];
+    char     slug[64];
+    char     yes_token_id[72];
+    char     no_token_id[72];
+    double   strike;
+    uint64_t start_time_ms;
+    uint64_t end_time_ms;
+} pt_market_discovery_msg_t;
+
+typedef struct {
+    uint64_t market_id;
+    char     condition_id[68];
+    int      winning_is_yes;
+    double   resolution_price;
+    uint64_t resolution_time_ms;
+} pt_market_resolution_msg_t;
+
+int pt_parse_market_discovery_msg(const char *msg, size_t len, pt_market_discovery_msg_t *out);
+int pt_parse_market_resolution_msg(const char *msg, size_t len, pt_market_resolution_msg_t *out);
+
 #ifdef __cplusplus
 }
 #endif

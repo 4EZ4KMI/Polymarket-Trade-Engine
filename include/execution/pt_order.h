@@ -39,6 +39,7 @@ typedef struct {
     pt_order_id_t    id;
     uint64_t         signal_id;
     pt_market_id_t   market_id;
+    char             condition_id[68];
     pt_token_id_t    token_id;
     int              is_yes;        /* which outcome token */
     int              side;          /* PT_SIDE_BID / PT_SIDE_ASK */
@@ -55,8 +56,15 @@ typedef struct {
     pt_flow_id_t     arb_id;        /* linkage to arb operation (0 = standalone) */
     
     /* Realistic Queue & Latency Breakdown */
-    pt_size_t        queue_ahead;   /* current remaining shares ahead in matching engine */
-    pt_size_t        initial_queue; /* shares ahead at arrival time */
+    pt_size_t        queue_ahead;               /* current remaining shares ahead in matching engine */
+    pt_size_t        initial_queue;             /* shares ahead at arrival time */
+    pt_size_t        queue_ahead_at_submit;     /* exact visible book depth at submit */
+    pt_size_t        queue_ahead_after_updates; /* tracked remaining queue */
+    pt_size_t        consumed_volume;           /* trade volume consumed ahead */
+    pt_size_t        cancel_volume;             /* cancelled volume ahead */
+    double           fill_ratio;                /* filled_size / original_size */
+    pt_nsec_t        time_to_fill_ns;           /* fill_timestamp - submit_timestamp */
+
     pt_nsec_t        created_t;     /* engine decision timestamp */
     pt_nsec_t        submit_t;      /* network departure timestamp */
     pt_nsec_t        arrival_t;     /* matching engine entry timestamp */

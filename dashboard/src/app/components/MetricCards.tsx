@@ -8,6 +8,10 @@ interface MetricCardsProps {
 }
 
 export function MetricCards({ portfolio, status, telemetry }: MetricCardsProps) {
+  const hasBtc = (status?.btc_price ?? 0) > 0;
+  const hasLatency = (telemetry?.latency_e2e_p50_us ?? 0) > 0;
+  const totalTrades = portfolio?.trades ?? 0;
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div className="bg-[#121824] p-4 rounded-xl border border-[#1f293d] space-y-1">
@@ -16,10 +20,10 @@ export function MetricCards({ portfolio, status, telemetry }: MetricCardsProps) 
           <DollarSign className="w-4 h-4 text-cyan-400" />
         </div>
         <div className="text-2xl font-bold text-white">
-          ${portfolio?.equity ? portfolio.equity.toFixed(2) : "5,000.00"}
+          ${portfolio?.equity !== undefined ? portfolio.equity.toFixed(2) : "--"}
         </div>
         <div className="text-xs text-gray-500">
-          Cash: ${portfolio?.cash ? portfolio.cash.toFixed(2) : "5,000.00"}
+          Cash: ${portfolio?.cash !== undefined ? portfolio.cash.toFixed(2) : "--"}
         </div>
       </div>
 
@@ -29,10 +33,10 @@ export function MetricCards({ portfolio, status, telemetry }: MetricCardsProps) 
           <TrendingUp className="w-4 h-4 text-emerald-400" />
         </div>
         <div className={`text-2xl font-bold ${(portfolio?.realized_pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-          ${portfolio?.realized_pnl ? portfolio.realized_pnl.toFixed(2) : "0.00"}
+          ${portfolio?.realized_pnl !== undefined ? portfolio.realized_pnl.toFixed(2) : "0.00"}
         </div>
         <div className="text-xs text-gray-500">
-          Trades: {portfolio?.trades || 0} • WinRate: {portfolio?.win_rate ? (portfolio.win_rate * 100).toFixed(1) : "0.0"}%
+          Trades: {totalTrades} • WinRate: {totalTrades > 0 && portfolio?.win_rate !== undefined ? `${(portfolio.win_rate * 100).toFixed(1)}%` : "--"}
         </div>
       </div>
 
@@ -42,7 +46,7 @@ export function MetricCards({ portfolio, status, telemetry }: MetricCardsProps) 
           <Activity className="w-4 h-4 text-amber-400" />
         </div>
         <div className="text-2xl font-bold text-amber-400">
-          ${status?.btc_price ? status.btc_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "87,500.00"}
+          {hasBtc ? `$${status!.btc_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "WAITING FOR FEED"}
         </div>
         <div className="text-xs text-gray-500">
           Live Feed: @aggTrade + @bookTicker
@@ -55,10 +59,10 @@ export function MetricCards({ portfolio, status, telemetry }: MetricCardsProps) 
           <Cpu className="w-4 h-4 text-purple-400" />
         </div>
         <div className="text-2xl font-bold text-purple-400">
-          {telemetry?.latency_e2e_p50_us ? telemetry.latency_e2e_p50_us.toFixed(1) : "16.4"} µs
+          {hasLatency ? `${telemetry!.latency_e2e_p50_us.toFixed(1)} µs` : "--"}
         </div>
         <div className="text-xs text-gray-500">
-          p90: {telemetry?.latency_e2e_p90_us ? telemetry.latency_e2e_p90_us.toFixed(1) : "16.4"} µs • max: {telemetry?.latency_e2e_max_us ? telemetry.latency_e2e_max_us.toFixed(1) : "13.7"} µs
+          {hasLatency ? `p90: ${telemetry!.latency_e2e_p90_us.toFixed(1)} µs • max: ${telemetry!.latency_e2e_max_us.toFixed(1)} µs` : "Awaiting engine ticks"}
         </div>
       </div>
     </div>

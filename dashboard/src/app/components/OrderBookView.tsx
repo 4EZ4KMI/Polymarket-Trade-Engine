@@ -8,8 +8,12 @@ interface ViewsProps {
 }
 
 export function OrderBookView({ book }: { book: OrderBook | null }) {
+  const hasYesBook = (book?.yes?.best_bid ?? 0) > 0 || (book?.yes?.best_ask ?? 0) > 0;
+  const hasNoBook = (book?.no?.best_bid ?? 0) > 0 || (book?.no?.best_ask ?? 0) > 0;
+  const hasLiveBooks = hasYesBook && hasNoBook;
+
   const paritySum = (book?.yes?.best_ask || 0) + (book?.no?.best_ask || 0);
-  const arbEdge = paritySum > 0 ? (1.0 - paritySum) * 100 : 0;
+  const arbEdge = (hasLiveBooks && paritySum > 0) ? (1.0 - paritySum) * 100 : 0;
 
   return (
     <div className="md:col-span-2 bg-[#121824] p-5 rounded-xl border border-[#1f293d] space-y-4">
@@ -19,13 +23,19 @@ export function OrderBookView({ book }: { book: OrderBook | null }) {
           POLYMARKET BTC 5m/15m DUAL L2 ORDER BOOK
         </h2>
         <div className="text-xs px-2.5 py-1 rounded bg-[#0b0e14] border border-[#1f293d] text-gray-300">
-          Parity Sum: <span className="font-bold text-white">${paritySum.toFixed(3)}</span>
-          {arbEdge > 0.0 ? (
-            <span className="ml-2 text-emerald-400 font-bold">
-              (Arb Edge: +{arbEdge.toFixed(2)}%)
-            </span>
+          {hasLiveBooks ? (
+            <>
+              Parity Sum: <span className="font-bold text-white">${paritySum.toFixed(3)}</span>
+              {arbEdge > 0.0 ? (
+                <span className="ml-2 text-emerald-400 font-bold">
+                  (Arb Edge: +{arbEdge.toFixed(2)}%)
+                </span>
+              ) : (
+                <span className="ml-2 text-gray-500">(No Arb)</span>
+              )}
+            </>
           ) : (
-            <span className="ml-2 text-gray-500">(No Arb)</span>
+            <span className="text-amber-400 font-mono">WAITING FOR LIVE MARKET</span>
           )}
         </div>
       </div>
@@ -40,18 +50,18 @@ export function OrderBookView({ book }: { book: OrderBook | null }) {
           <div className="flex justify-between items-center text-xs py-1">
             <span className="text-gray-400">Best Bid:</span>
             <span className="font-bold text-emerald-400">
-              ${book?.yes?.best_bid?.toFixed(3) || "0.490"} ({book?.yes?.bid_size || 200} shs)
+              {hasYesBook && (book?.yes?.best_bid ?? 0) > 0 ? `$${book!.yes.best_bid.toFixed(3)} (${book!.yes.bid_size} shs)` : "--"}
             </span>
           </div>
           <div className="flex justify-between items-center text-xs py-1">
             <span className="text-gray-400">Best Ask:</span>
             <span className="font-bold text-rose-400">
-              ${book?.yes?.best_ask?.toFixed(3) || "0.495"} ({book?.yes?.ask_size || 250} shs)
+              {hasYesBook && (book?.yes?.best_ask ?? 0) > 0 ? `$${book!.yes.best_ask.toFixed(3)} (${book!.yes.ask_size} shs)` : "--"}
             </span>
           </div>
           <div className="w-full bg-[#121824] h-2 rounded-full overflow-hidden flex">
-            <div className="bg-emerald-500 h-full" style={{ width: "45%" }} />
-            <div className="bg-rose-500 h-full" style={{ width: "55%" }} />
+            <div className="bg-emerald-500 h-full" style={{ width: hasYesBook ? "50%" : "0%" }} />
+            <div className="bg-rose-500 h-full" style={{ width: hasYesBook ? "50%" : "0%" }} />
           </div>
         </div>
 
@@ -64,18 +74,18 @@ export function OrderBookView({ book }: { book: OrderBook | null }) {
           <div className="flex justify-between items-center text-xs py-1">
             <span className="text-gray-400">Best Bid:</span>
             <span className="font-bold text-emerald-400">
-              ${book?.no?.best_bid?.toFixed(3) || "0.495"} ({book?.no?.bid_size || 200} shs)
+              {hasNoBook && (book?.no?.best_bid ?? 0) > 0 ? `$${book!.no.best_bid.toFixed(3)} (${book!.no.bid_size} shs)` : "--"}
             </span>
           </div>
           <div className="flex justify-between items-center text-xs py-1">
             <span className="text-gray-400">Best Ask:</span>
             <span className="font-bold text-rose-400">
-              ${book?.no?.best_ask?.toFixed(3) || "0.500"} ({book?.no?.ask_size || 300} shs)
+              {hasNoBook && (book?.no?.best_ask ?? 0) > 0 ? `$${book!.no.best_ask.toFixed(3)} (${book!.no.ask_size} shs)` : "--"}
             </span>
           </div>
           <div className="w-full bg-[#121824] h-2 rounded-full overflow-hidden flex">
-            <div className="bg-emerald-500 h-full" style={{ width: "40%" }} />
-            <div className="bg-rose-500 h-full" style={{ width: "60%" }} />
+            <div className="bg-emerald-500 h-full" style={{ width: hasNoBook ? "50%" : "0%" }} />
+            <div className="bg-rose-500 h-full" style={{ width: hasNoBook ? "50%" : "0%" }} />
           </div>
         </div>
       </div>

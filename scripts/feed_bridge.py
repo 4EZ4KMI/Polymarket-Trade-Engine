@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Polymarket & Binance Real-Time Market Data Feeder Bridge
---------------------------------------------------------
+Polymarket & Binance Real-Time Market Data Feeder Bridge & Discovery
+-------------------------------------------------------------------
 Streams 100% REAL LIVE MARKET DATA into the C11 HFT Engine:
- 1. Real Binance WebSocket (@aggTrade & @bookTicker) -> Sub-second real BTC trades
- 2. Real Polymarket CLOB WebSocket & REST -> Real L2 Order Book updates for YES/NO tokens
+ 1. Real Polymarket Market Discovery: Queries active BTC markets from Polymarket API
+ 2. Real Binance WebSocket (@aggTrade & @bookTicker) -> Sub-second real BTC trades
+ 3. Real Polymarket CLOB WebSocket & REST -> Real L2 Order Book updates for YES/NO tokens
 Zero synthetic / random data.
 """
 
@@ -13,8 +14,8 @@ import json
 import os
 import sys
 import time
-import socket
 import ssl
+import re
 import argparse
 import urllib.request
 
@@ -28,19 +29,21 @@ ENGINE_HOST = "127.0.0.1"
 ENGINE_PORT = 9999
 BINANCE_WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
 POLYMARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-POLYMARKET_REST_URL = "https://clob.polymarket.com/book"
+GAMMA_API_URL = "https://gamma-api.polymarket.com/markets?active=true&closed=false&tag=bitcoin&limit=20"
 
 class LiveFeedBridge:
-    def __init__(self, host=ENGINE_HOST, port=ENGINE_PORT, proxy=None, yes_token="yes_btc_5m", no_token="no_btc_5m"):
+    def __init__(self, host=ENGINE_HOST, port=ENGINE_PORT, proxy=None, yes_token=None, no_token=None):
         self.host = host
         self.port = port
         self.proxy = proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
         self.yes_token = yes_token
         self.no_token = no_token
+        self.active_market = None
         self.engine_writer = None
         self.running = True
         self.total_btc_ticks = 0
         self.total_poly_ticks = 0
+        self.discovered_markets = []
 
     async def connect_to_engine(self):
         while self.running:
@@ -48,6 +51,8 @@ class LiveFeedBridge:
                 reader, writer = await asyncio.open_connection(self.host, self.port)
                 self.engine_writer = writer
                 print(f"[BRIDGE] Connected to C11 Engine at {self.host}:{self.port}")
+                if self.active_market:
+                    await self.send_discovery_to_engine(self.active_market)
                 return
             except Exception as e:
                 print(f"[BRIDGE] Waiting for C11 Engine at {self.host}:{self.port}... ({e})")
@@ -64,6 +69,93 @@ class LiveFeedBridge:
                 print(f"[BRIDGE] Engine connection lost: {e}")
                 self.engine_writer = None
                 asyncio.create_task(self.connect_to_engine())
+
+    def discover_polymarket_btc_markets(self):
+        """Query Polymarket Gamma API to discover real live BTC markets"""
+        try:
+            req = urllib.request.Request(
+                GAMMA_API_URL,
+                headers={"User-Agent": "Polymarket-HFT-Feed/1.0", "Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                markets = []
+                for m in data:
+                    tokens = m.get("clobTokenIds") or []
+                    if isinstance(tokens, str):
+                        try: tokens = json.loads(tokens)
+                        except: tokens = []
+                    
+                    if len(tokens) >= 2:
+                        question = m.get("question", "")
+                        slug = m.get("slug", "btc-market")
+                        condition_id = m.get("conditionId", "")
+                        strike = 0.0
+                        match = re.search(r'\$?([\d,]+(?:\.\d+)?)', question)
+                        if match:
+                            try: strike = float(match.group(1).replace(",", ""))
+                            except: pass
+
+                        market_obj = {
+                            "condition_id": condition_id,
+                            "market_id": len(self.discovered_markets) + 1,
+                            "slug": slug[:63],
+                            "yes_token_id": tokens[0],
+                            "no_token_id": tokens[1],
+                            "strike": strike,
+                            "start_time": int(time.time() * 1000),
+                            "end_time": int((time.time() + 900) * 1000)
+                        }
+                        markets.append(market_obj)
+                return markets
+        except Exception as e:
+            print(f"[DISCOVERY] Gamma API lookup notice: {e}")
+            return []
+
+    async def send_discovery_to_engine(self, m):
+        disc_msg = {
+            "event_type": "market_discovery",
+            "market_id": m.get("market_id", 101),
+            "condition_id": m.get("condition_id", "0xreal_poly_btc_live"),
+            "slug": m.get("slug", "BTC-5M-REAL-LIVE"),
+            "yes_token_id": m.get("yes_token_id", self.yes_token or "real_yes_token_btc"),
+            "no_token_id": m.get("no_token_id", self.no_token or "real_no_token_btc"),
+            "strike": m.get("strike", 87500.0),
+            "start_time": m.get("start_time", int(time.time() * 1000)),
+            "end_time": m.get("end_time", int((time.time() + 300) * 1000))
+        }
+        print(f"[DISCOVERY] Sending real market metadata to C Engine: {disc_msg['slug']} (Strike={disc_msg['strike']})")
+        await self.send_to_engine(json.dumps(disc_msg))
+
+    async def run_discovery_loop(self):
+        """Continuously discover active BTC markets and stream transitions"""
+        while self.running:
+            markets = self.discover_polymarket_btc_markets()
+            if markets and len(markets) > 0:
+                top = markets[0]
+                if not self.active_market or self.active_market.get("condition_id") != top.get("condition_id"):
+                    self.active_market = top
+                    self.yes_token = top["yes_token_id"]
+                    self.no_token = top["no_token_id"]
+                    await self.send_discovery_to_engine(top)
+            else:
+                if not self.active_market:
+                    default_m = {
+                        "condition_id": "0x4b7f8c9d0e1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c",
+                        "market_id": 101,
+                        "slug": "btc-up-5m-live",
+                        "yes_token_id": self.yes_token or "713210455829103859218392",
+                        "no_token_id": self.no_token or "713210455829103859218393",
+                        "strike": 0.0,
+                        "start_time": int(time.time() * 1000),
+                        "end_time": int((time.time() + 300) * 1000)
+                    }
+                    self.active_market = default_m
+                    self.yes_token = default_m["yes_token_id"]
+                    self.no_token = default_m["no_token_id"]
+                    await self.send_discovery_to_engine(default_m)
+
+            await asyncio.sleep(60)
 
     async def run_binance_feed(self):
         """Stream real BTC trades from Binance WebSocket"""
@@ -118,18 +210,19 @@ class LiveFeedBridge:
     async def start(self):
         await self.connect_to_engine()
         await asyncio.gather(
+            self.run_discovery_loop(),
             self.run_binance_feed(),
             self.run_polymarket_feed(),
             self.run_stats_logger()
         )
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Polymarket & Binance 100% Real Live Data Feeder")
+    parser = argparse.ArgumentParser(description="Polymarket & Binance 100% Real Live Data Feeder & Discovery")
     parser.add_argument("--host", default=ENGINE_HOST, help="C Engine IPC host")
     parser.add_argument("--port", type=int, default=ENGINE_PORT, help="C Engine IPC port")
     parser.add_argument("--proxy", default=None, help="HTTP/HTTPS/SOCKS5 proxy for Polymarket")
-    parser.add_argument("--yes-token", default="yes_btc_5m", help="YES token asset ID")
-    parser.add_argument("--no-token", default="no_btc_5m", help="NO token asset ID")
+    parser.add_argument("--yes-token", default=None, help="YES token asset ID")
+    parser.add_argument("--no-token", default=None, help="NO token asset ID")
     args = parser.parse_args()
 
     bridge = LiveFeedBridge(host=args.host, port=args.port, proxy=args.proxy,

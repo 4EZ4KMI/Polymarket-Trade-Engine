@@ -58,13 +58,32 @@ static void handle_client_(int cfd, int events, void *ud)
 
     if (strncmp(buf, "GET /api/status", 15) == 0 || strncmp(buf, "GET / ", 6) == 0) {
         double uptime_s = (double)(pt_clock_mono_ns() - s->start_time_ns) / 1e9;
+        pt_market_entry_t *act_m = s->registry ? pt_market_registry_get_active(s->registry) : NULL;
+        int has_live_book = (s->yes_book && s->yes_book->bids.count > 0 && s->yes_book->asks.count > 0 &&
+                             s->no_book && s->no_book->bids.count > 0 && s->no_book->asks.count > 0);
+        const char *mkt_status = "WAITING FOR LIVE MARKET";
+        if (act_m && has_live_book && act_m->state == PT_MKT_STATE_ACTIVE) {
+            mkt_status = "ACTIVE";
+        } else if (act_m && act_m->state == PT_MKT_STATE_SUBSCRIBING) {
+            mkt_status = "SUBSCRIBING";
+        } else if (act_m && act_m->state == PT_MKT_STATE_DISCOVERED) {
+            mkt_status = "DISCOVERED";
+        }
+
         snprintf(body, sizeof(body),
-            "{\"status\":\"running\",\"mode\":\"%s\",\"uptime_sec\":%.1f,\"kill_switch_tripped\":%d,\"kill_reason\":\"%s\",\"btc_price\":%.2f}",
+            "{\"status\":\"running\",\"mode\":\"%s\",\"uptime_sec\":%.1f,\"kill_switch_tripped\":%d,"
+            "\"kill_reason\":\"%s\",\"btc_price\":%.2f,\"market_status\":\"%s\",\"market_slug\":\"%s\","
+            "\"condition_id\":\"%s\",\"strike\":%.2f,\"has_live_market\":%d}",
             (s->mode == PT_MODE_LIVE) ? "LIVE" : "PAPER",
             uptime_s,
             pt_risk_is_tripped(s->risk),
             s->risk && s->risk->kill_reason ? s->risk->kill_reason : "none",
-            s->btc_mid);
+            s->btc_mid,
+            mkt_status,
+            act_m ? act_m->slug : "none",
+            act_m ? act_m->condition_id : "none",
+            act_m ? act_m->strike : 0.0,
+            (act_m != NULL && has_live_book) ? 1 : 0);
         send_response_(cfd, 200, "OK", "application/json", body);
     }
     else if (strncmp(buf, "GET /api/telemetry", 18) == 0) {
@@ -204,6 +223,12 @@ void pt_http_server_update_btc(pt_http_server_t *s, double btc_mid)
 {
     if (s) s->btc_mid = btc_mid;
 }
+
+void pt_http_server_set_registry(pt_http_server_t *s, pt_market_registry_t *registry)
+{
+    if (s) s->registry = registry;
+}
+
 void pt_http_server_set_stats(pt_http_server_t *s, pt_strategy_stats_tracker_t *stats)
 {
     if (s) s->stats = stats;

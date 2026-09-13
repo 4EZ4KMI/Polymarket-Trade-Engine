@@ -29,7 +29,11 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
                         pt_risk_engine_t *risk,
                         pt_telemetry_t *telemetry,
                         pt_dataset_writer_t *dataset_writer,
-                        double *last_btc_price)
+                        double *last_btc_price,
+                        pt_market_registry_t *registry,
+                        pt_portfolio_t *portfolio,
+                        pt_strategy_stats_tracker_t *stats,
+                        pt_adverse_tracker_t *adverse)
 {
     if (!b || !reactor) return -1;
     memset(b, 0, sizeof(*b));
@@ -41,6 +45,10 @@ int pt_feed_bridge_init(pt_feed_bridge_t *b,
     b->telemetry = telemetry;
     b->dataset_writer = dataset_writer;
     b->last_btc_price = last_btc_price;
+    b->registry = registry;
+    b->portfolio = portfolio;
+    b->stats = stats;
+    b->adverse = adverse;
     b->client_fd = -1;
 
     b->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -167,6 +175,60 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
 {
     if (!b || !line || len == 0) return;
 
+    /* 1. Market Discovery Event */
+    pt_market_discovery_msg_t disc;
+    if (pt_parse_market_discovery_msg(line, len, &disc)) {
+        b->total_discovery_events++;
+        if (b->registry) {
+            pt_nsec_t st_ns = disc.start_time_ms ? (pt_nsec_t)disc.start_time_ms * 1000000ULL : 0;
+            pt_nsec_t end_ns = disc.end_time_ms ? (pt_nsec_t)disc.end_time_ms * 1000000ULL : 0;
+            pt_market_entry_t *m = pt_market_registry_add(b->registry,
+                                                          disc.market_id,
+                                                          disc.condition_id,
+                                                          disc.slug,
+                                                          disc.yes_token_id,
+                                                          disc.no_token_id,
+                                                          disc.strike,
+                                                          st_ns, end_ns, now);
+            if (m) {
+                m->state = PT_MKT_STATE_SUBSCRIBING;
+                printf("[DISCOVERY] Real market discovered: ID=%llu Slug='%s' Strike=%.2f Cond='%s'\n",
+                       (unsigned long long)m->market_id, m->slug, m->strike, m->condition_id);
+            }
+        }
+        return;
+    }
+
+    /* 2. Real Market Resolution Event */
+    pt_market_resolution_msg_t res;
+    if (pt_parse_market_resolution_msg(line, len, &res)) {
+        b->total_resolution_events++;
+        if (b->registry) {
+            pt_market_registry_resolve(b->registry, res.condition_id, res.market_id,
+                                       res.winning_is_yes, res.resolution_price, now);
+        }
+        if (b->portfolio) {
+            pt_market_id_t mid = res.market_id;
+            if (mid == 0 && b->registry) {
+                pt_market_entry_t *m = pt_market_registry_find_by_condition(b->registry, res.condition_id);
+                if (m) mid = m->market_id;
+            }
+            if (mid > 0) {
+                double pnl_before = b->portfolio->realized_pnl;
+                pt_portfolio_settle_market(b->portfolio, mid, res.winning_is_yes);
+                double pnl_diff = b->portfolio->realized_pnl - pnl_before;
+                int is_win = (pnl_diff >= 0) ? 1 : 0;
+                if (b->stats) {
+                    pt_strat_stats_record_settlement(b->stats, PT_STRAT_PARITY5M, is_win, pnl_diff, 100.0, pnl_diff > 0 ? 0.05 : -0.05);
+                }
+                printf("[RESOLUTION] Real market resolved: ID=%llu Winner=%s Price=%.2f SettlePnL=$%.2f\n",
+                       (unsigned long long)mid, res.winning_is_yes ? "YES" : "NO", res.resolution_price, pnl_diff);
+            }
+        }
+        return;
+    }
+
+    /* 3. Binance Real BTC Trades */
     pt_binance_trade_t btr;
     if (pt_parse_binance_trade(line, len, &btr)) {
         b->total_btc_events++;
@@ -186,15 +248,31 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
         return;
     }
 
+    /* 4. Polymarket Real Book Messages */
     pt_poly_delta_t pd;
     if (pt_parse_polymarket_book_msg(line, len, &pd)) {
         b->total_poly_events++;
         if (b->telemetry) b->telemetry->poly_events_total++;
         if (b->risk) pt_risk_feed_touch_poly(b->risk, now);
 
-        int is_yes = (strstr(pd.asset_id, "yes") || strstr(pd.asset_id, "YES") || pd.asset_id[0] == '1' || pd.asset_id[0] == '\0');
-        pt_book_t *target = is_yes ? b->yes_book : b->no_book;
+        int is_yes = 1;
+        pt_market_entry_t *m = NULL;
+        if (b->registry) {
+            m = pt_market_registry_find_by_token(b->registry, pd.asset_id, &is_yes);
+            if (!m) {
+                m = pt_market_registry_get_active(b->registry);
+                if (m) {
+                    is_yes = (strstr(pd.asset_id, "yes") || strstr(pd.asset_id, "YES") || pd.asset_id[0] == '1' || pd.asset_id[0] == '\0');
+                }
+            }
+            if (m && (m->state == PT_MKT_STATE_DISCOVERED || m->state == PT_MKT_STATE_SUBSCRIBING)) {
+                pt_market_registry_on_snapshot(b->registry, m->market_id, now);
+            }
+        } else {
+            is_yes = (strstr(pd.asset_id, "yes") || strstr(pd.asset_id, "YES") || pd.asset_id[0] == '1' || pd.asset_id[0] == '\0');
+        }
 
+        pt_book_t *target = is_yes ? b->yes_book : b->no_book;
         if (target) {
             if (pd.is_snapshot) {
                 pt_level_t lvl = { .price = pd.price, .size = pd.size };
@@ -202,6 +280,11 @@ void pt_feed_bridge_on_line(pt_feed_bridge_t *b, const char *line, size_t len, p
             } else {
                 pt_book_update(target, pd.side, pd.price, pd.size, 1, 1);
             }
+        }
+
+        if (b->adverse) {
+            pt_market_id_t mid = m ? m->market_id : (b->registry ? b->registry->active_market_id : 1);
+            pt_adverse_tracker_on_price(b->adverse, mid, is_yes, pd.price, now);
         }
 
         if (b->dataset_writer) {

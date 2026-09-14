@@ -19,6 +19,40 @@ BINANCE_WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
 POLYMARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets?active=true&closed=false&tag=bitcoin&limit=50"
 GAMMA_CRYPTO_URL = "https://gamma-api.polymarket.com/markets?active=true&closed=false&tag=crypto&limit=50"
+# Polymarket's recurring speed markets (e.g. "Bitcoin Up or Down - x:xx-x:xx ET",
+# slug `btc-updown-5m-<unix-window-start>`) are NOT surfaced by the tag feeds.
+# They live as a continuous ladder and only appear when the feed is ordered by
+# endDate. Query both directions so we capture the currently-open window and the
+# upcoming ones regardless of feed fan-out.
+GAMMA_ENDDESC_URL = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=250&order=endDate&ascending=false"
+GAMMA_ENDASC_URL = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=250&order=endDate&ascending=true"
+
+# Recurring "Coin Up or Down" window market slug: <coin>-updown-<5m|15m|1h>-<epoch>.
+UP_DOWN_PAT = re.compile(r'^([a-z0-9]+)-updown-(5m|15m|1h)-(\d{9,10})$', re.IGNORECASE)
+
+
+def extract_clob_tokens(m):
+    """Return (yes_token_id, no_token_id) from a gamma market dict, or (None, None)."""
+    ct = m.get("clobTokenIds")
+    yt, nt = None, None
+    if ct:
+        if isinstance(ct, str):
+            try:
+                parsed = json.loads(ct)
+                yt, nt = str(parsed[0]), str(parsed[1]) if len(parsed) >= 2 else (None, None)
+            except Exception:
+                pass
+        elif isinstance(ct, list) and len(ct) >= 2:
+            yt, nt = str(ct[0]), str(ct[1])
+    if not yt or not nt:
+        for t in m.get("tokens", []):
+            o = str(t.get("outcome", "")).lower()
+            tid = t.get("token_id")
+            if o in ["yes", "1", "up", "true"]:
+                yt = str(tid)
+            elif o in ["no", "0", "down", "false"]:
+                nt = str(tid)
+    return yt, nt
 
 
 def parse_iso_to_epoch_ms(iso_str):
@@ -136,62 +170,58 @@ class LiveFeedBridge:
                 self.engine_writer = None
                 asyncio.create_task(self.connect_to_engine())
     def discover_polymarket_btc_markets(self):
-        """Discover real, active Polymarket BTC markets via the Gamma API."""
+        """Discover real, active Polymarket BTC markets via the Gamma API.
+
+        Historically this hit featured/tag feeds only, which Polymarket serves as a
+        generic "popular" list that never includes the recurring short-horizon BTC
+        "Up or Down" speed markets. Those live as a continuous ladder keyed by a
+        window epoch in the slug: `btc-updown-5m-<unix-start>` / `btc-updown-15m-...`.
+        We therefore ALSO query endDate-ordered feeds and recover the true 300s/900s
+        window from the slug itself (the startDate/endDateIso fields on these ladder
+        markets are listing dates, not the trading window).
+        """
+        now_ms = int(time.time() * 1000)
         raw = []
-        for url in [GAMMA_MARKETS_URL, GAMMA_CRYPTO_URL]:
-            try:
-                op = self._http_opener()
-                rq = urllib.request.Request(url, headers={"User-Agent": "PM-Feed/1.0",
-                                                          "Accept": "application/json"})
-                with op.open(rq, timeout=10) as r:
-                    if r.status == 200:
-                        data = json.loads(r.read().decode("utf-8"))
-                        if isinstance(data, list):
-                            raw.extend(data)
-            except Exception as e:
-                print(f"[DISCOVERY] warning: Gamma request failed ({e})")
-                continue
+        feeds = [GAMMA_MARKETS_URL, GAMMA_CRYPTO_URL, GAMMA_ENDDESC_URL, GAMMA_ENDASC_URL]
+        for url in feeds:
+            for attempt in range(3):  # gamma reachability is flaky behind some egress
+                try:
+                    op = self._http_opener()
+                    rq = urllib.request.Request(url, headers={"User-Agent": "PM-Feed/1.0",
+                                                              "Accept": "application/json"})
+                    with op.open(rq, timeout=12) as r:
+                        if r.status == 200:
+                            data = json.loads(r.read().decode("utf-8"))
+                            if isinstance(data, list):
+                                raw.extend(data)
+                    break
+                except Exception as e:
+                    if attempt >= 2:
+                        print(f"[DISCOVERY] warning: Gamma request failed ({e})")
+                    time.sleep(0.6)
         if not raw:
             return []
 
-        disc, now_ms = [], int(time.time() * 1000)
+        disc = []
+        bycid = {}
         for m in raw:
-            if not m.get("active") or m.get("closed") or not m.get("acceptingOrders", True):
-                continue
-            q = m.get("question", "") or ""
-            sl = m.get("slug", "") or ""
-            desc = m.get("description", "") or ""
-            ft = f"{q} {sl} {desc}".lower()
-            if not ("btc" in ft or "bitcoin" in ft):
+            if not m.get("active") or m.get("closed"):
                 continue
             cid = (m.get("conditionId") or m.get("condition_id") or "").strip()
             if not cid or len(cid) < 10:
                 continue
-
-            ct = m.get("clobTokenIds")
-            yt, nt = None, None
-            if ct:
-                if isinstance(ct, str):
-                    try:
-                        parsed = json.loads(ct)
-                        yt, nt = str(parsed[0]), str(parsed[1]) if len(parsed) >= 2 else (None, None)
-                    except Exception:
-                        pass
-                elif isinstance(ct, list) and len(ct) >= 2:
-                    yt, nt = str(ct[0]), str(ct[1])
-            if not yt or not nt:
-                for t in m.get("tokens", []):
-                    o = str(t.get("outcome", "")).lower()
-                    tid = t.get("token_id")
-                    if o in ["yes", "1", "up", "true"]:
-                        yt = str(tid)
-                    elif o in ["no", "0", "down", "false"]:
-                        nt = str(tid)
-            if not yt or not nt or len(yt) < 10 or len(nt) < 10:
-                continue
-
-            st = parse_iso_to_epoch_ms(m.get("startDate") or m.get("startDateIso")) or now_ms
-            et = parse_iso_to_epoch_ms(m.get("endDate") or m.get("endDateIso")) or (now_ms + 300000)
+            # Restore the true window from the slug for recurring speed markets.
+            um = UP_DOWN_PAT.match(m.get("slug") or "")
+            st = et = None
+            if um:
+                win = um.group(2).lower()
+                dur = {"5m": 300, "15m": 900, "1h": 3600}.get(win)
+                if dur:
+                    st = int(um.group(3)) * 1000
+                    et = st + dur * 1000
+            if st is None or et is None:
+                st = parse_iso_to_epoch_ms(m.get("startDate") or m.get("startDateIso")) or now_ms
+                et = parse_iso_to_epoch_ms(m.get("endDate") or m.get("endDateIso")) or (now_ms + 300000)
             if et <= now_ms:
                 continue
             dur = int((et - st) / 1000)
@@ -199,10 +229,25 @@ class LiveFeedBridge:
             eb = 750 <= dur <= 1200
             if not ea and not eb:
                 continue
+
+            # BTC-only: the engine trades Binance BTC vs Polymarket BTC markets.
+            q = (m.get("question", "") or "")
+            sl = (m.get("slug", "") or "")
+            if um:
+                if um.group(1).lower() != "btc":
+                    continue
+            else:
+                desc = (m.get("description", "") or "")
+                if "btc" not in (f"{q} {sl} {desc}").lower() and "bitcoin" not in (f"{q} {sl} {desc}").lower():
+                    continue
+
+            yt, nt = extract_clob_tokens(m)
+            if not yt or not nt or len(yt) < 10 or len(nt) < 10:
+                continue
             mid = derive_market_id(cid)
             if not mid:
                 continue
-            disc.append({
+            bycid[cid] = {
                 "condition_id": cid,
                 "market_id": mid,
                 "slug": (sl[:63] if sl else f"btc-{dur}s"),
@@ -212,10 +257,20 @@ class LiveFeedBridge:
                 "start_time": st,
                 "end_time": et,
                 "duration_sec": dur,
-                "eligible_for_strategy_a": ea,
-                "eligible_for_strategy_b": eb,
-            })
-        disc.sort(key=lambda x: x["end_time"])
+                "eligible_for_strategy_a": bool(ea),
+                "eligible_for_strategy_b": bool(eb),
+            }
+        disc = list(bycid.values())
+
+        # Prefer the currently-open window (start<=now<end), then the nearest
+        # upcoming window, then by earliest expiry. Guarantees a real live window
+        # gets picked the moment feeding begins.
+        def sort_key(x):
+            open_now = 1 if (x["start_time"] <= now_ms < x["end_time"]) else 0
+            opening_soon = 1 if (x["start_time"] > now_ms and x["start_time"] - now_ms <= 900000) else 0
+            return (-open_now, -opening_soon, x["end_time"])
+
+        disc.sort(key=sort_key)
         return disc
     async def check_verified_resolution(self, cid):
         """Poll Gamma and return a verified resolution dict, or None if not yet resolved.

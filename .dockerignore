@@ -1,0 +1,12 @@
+.git/
+build/
+node_modules/
+dashboard/node_modules/
+dashboard/.next/
+data/
+dist/
+__pycache__/
+*.pyc
+*.o
+*.a
+.env

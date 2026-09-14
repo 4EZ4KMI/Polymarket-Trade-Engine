@@ -1,0 +1,20 @@
+# Polymarket HFT — one-container stack (engine 8080 + dashboard 3000 + IPC 9999).
+# Usage on a Linux server:
+#   docker compose up -d
+#   docker compose logs -f
+services:
+  polymarket-hft:
+    image: polymarket-hft:latest         # or docker.io/<user>/polymarket-hft:latest
+    container_name: polymarket-hft
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # engine monitoring / trading API
+      - "3000:3000"   # dashboard
+      # note: IPC feed 9999 is internal to the container (bridge-binds localhost)
+    environment:
+      ENGINE_PORT: "8080"
+      DASH_PORT: "3000"
+    volumes:
+      - polymarket-data:/app/data        # persist live dataset / logs / stats
+volumes:
+  polymarket-data:

@@ -8,10 +8,10 @@ UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),Linux)
 CPPFLAGS += -DPMT_USE_EPOLL=1 -D_GNU_SOURCE
-LDLIBS   += -lpthread
+LDLIBS   += -lpthread -lm
 else
 CPPFLAGS += -DPMT_USE_KQUEUE=1
-LDLIBS   += -lpthread
+LDLIBS   += -lpthread -lm
 endif
 
 BUILD   := build

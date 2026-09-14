@@ -26,6 +26,9 @@ make run_tests
 # 3. Run the engine + live feeds (see "Running" below)
 scripts/start_live_collector.sh            # segments of feeds + engine
 # or run each piece manually
+# ...
+# 4. (Or) run the whole stack in Docker — one container, no installs:
+#    docker compose up -d --build    (engine :8080, IPC :9999, dashboard :3000)
 ```
 
 ---
@@ -83,6 +86,41 @@ python3 scripts/feed_bridge.py --help
 ```
 Without `--yes-token/--no-token`, the bridge discovers active BTC markets itself via the
 Gamma API and classifies them as `eligible_for_strategy_a` / `eligible_for_strategy_b`.
+
+---
+
+## Docker Deployment
+
+The whole stack — C engine (HTTP `:8080`, IPC `:9999`), live Binance+Polymarket feed bridge,
+and the Next.js dashboard (`:3000`) — is packaged into **a single container**
+(`Dockerfile` + `docker/entrypoint.sh`). No Docker Hub account needed.
+
+```bash
+# build + run with compose
+docker compose up -d --build
+
+# or plain docker
+docker build -t polymarket-hft:latest .
+docker run -d --name polymarket-hft --restart unless-stopped \
+  -p 8080:8080 -p 3000:3000 \
+  -v polymarket-data:/app/data \
+  polymarket-hft:latest
+```
+
+Verify:
+```bash
+curl -s http://localhost:8080/api/status     # {"mode":"PAPER", "btc_price":..., "has_live_market":...}
+docker logs -f polymarket-hft                # engine / bridge / dashboard logs
+```
+
+Notes:
+- In-container the engine builds from source (gcc, epoll/Linux), so `docker load`'d images are
+  self-contained and run without the repo on the target machine.
+- `dist/*.tar.gz` are local `docker save` artifacts (git-ignored; GitHub's 100MB/file limit);
+  ship them to an offline server via `scp`, then `gunzip -c ... | docker load`.
+- Multi-arch build (no registry):
+  `docker buildx build --platform linux/amd64,linux/arm64 --output type=docker,dest=/tmp/hft.tar .`
+- PAPER lock stays enforced in-container; see `DOCKER.md` for full deploy instructions.
 
 ---
 

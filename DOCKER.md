@@ -1,76 +1,108 @@
-# Запуск на Linux-сервере без Docker Hub / регистраций
+# Деплой на Linux-сервере (Docker, без Docker Hub)
 
-Образ собран и лежит **готовым архивом** (никакого аккаунта Docker Hub не нужно —
-перекачиваешь архив, делаешь `docker load`, запускаешь). Поддерживает две архитектуры:
-- `dist/polymarket-hft-amd64.tar.gz` — большинство VPS (Intel/AMD).
-- `dist/polymarket-hft-arm64.tar.gz` — ARM (Apple Silicon VM, Ampere, Graviton и т.п.).
+Весь стек упакован в **один контейнер**: C-движок (HTTP `:8080`, IPC `:9999`) + live feed
+bridge (Binance + Polymarket) + Next.js-дашборд (`:3000`). Docker-исходники
+(`Dockerfile`, `docker/entrypoint.sh`, `docker-compose.yml`) закоммичены в
 
-Внутри один контейнер: **движок (HTTP 8080 + IPC 9999) + live feed bridge + дашборд (3000)**.
+> **репозиторий:** `github.com/4EZ4KMI/Polymarket-Trade-Engine`
+
+Есть **два способа** получить образ; реестр (Docker Hub) не требуется вообще.
 
 ---
 
-## 1. Передать образ на сервер
+## Способ A — собрать прямо на сервере (рекомендуется)
 
-Со своей машины (amd64-вариант):
+На сервере нужны git + интернет:
 
 ```bash
-scp dist/polymarket-hft-amd64.tar.gz user@YOUR_SERVER:/tmp/
-# или на arm-сервер:
-scp dist/polymarket-hft-arm64.tar.gz user@YOUR_SERVER:/tmp/
+git clone https://github.com/4EZ4KMI/Polymarket-Trade-Engine.git polymarket
+cd polymarket
+docker compose up -d --build            # сборка + запуск, image: polymarket-hft:latest
 ```
 
-## 2. Загрузить образ и запустить на сервере
+Или без compose:
 
 ```bash
-# на сервере
-gunzip -c /tmp/polymarket-hft-amd64.tar.gz | docker load   # -> polymarket-hft:latest
-
-mkdir -p ~/pmhft && cd ~/pmhft
-# (если есть docker-compose.yml — клади его рядом с проектом,
-#  либо просто docker run):
-
+docker build -t polymarket-hft:latest .
 docker run -d --name polymarket-hft --restart unless-stopped \
   -p 8080:8080 -p 3000:3000 \
   -v polymarket-data:/app/data \
   polymarket-hft:latest
 ```
 
-или через compose:
+> Примечание: в repo не хранятся образы. Внутри контейнера идёт сборка C-движка (gcc,
+> epoll/Linux) и Next.js standalone — поэтому образ самостоятельный и работает **без**
+> исходников на целевой машине после `docker load`.
 
+---
+
+## Способ B — готовый образ архивом (без интернета на сервере)
+
+`dist/*.tar.gz` — это **локальные артефакты** (в git НЕ залиты: >100MB, лимит GitHub).
+Собираются локально и переносятся на сервер через `scp`/USB:
+
+### 1. Собрать архивы на этой машине
 ```bash
-docker compose up -d
+mkdir -p dist
+docker build --platform linux/amd64 -t polymarket-hft:latest .
+docker save polymarket-hft:latest | gzip > dist/polymarket-hft-amd64.tar.gz
+# (для ARM — замените --platform на linux/arm64, тег polymarket-hft:latest-arm64)
+```
+Либо уже готовые образы в этой машинной среде: `polymarket-hft:amd64check` / `:buildcheck`.
+
+### 2. Передать на сервер
+```bash
+scp dist/polymarket-hft-amd64.tar.gz user@YOUR_SERVER:/tmp/   # amd64 (Intel/AMD VPS)
+# или
+scp dist/polymarket-hft-arm64.tar.gz user@YOUR_SERVER:/tmp/   # ARM (Graviton, Ampere…)
 ```
 
-## 3. Проверка
-
+### 3. Загрузить и запустить на сервере
 ```bash
-docker logs -f polymarket-hft          # логи движка/фида/дашборда
-curl -s http://localhost:8080/api/status   # статус движка (PAPER, btc_price, has_live_market)
-# дашборд: http://SERVER:3000
+gunzip -c /tmp/polymarket-hft-amd64.tar.gz | docker load        # -> polymarket-hft:latest
+docker run -d --name polymarket-hft --restart unless-stopped \
+  -p 8080:8080 -p 3000:3000 \
+  -v polymarket-data:/app/data \
+  polymarket-hft:latest
 ```
 
-Ожидается в статусе: `"mode":"PAPER"`, живой `btc_price`, и после того как спустит
-внешний сетевой блок на Polymarket — `has_live_market:1` и `market_slug` = открытое
-5-мин окно `btc-updown-5m-<epoch>`.
-
-## Альтернатива: собрать прямо на сервере (не нужен архив)
-
-Если на сервере есть git + интернет:
-
+### Мульти-арч (linux/amd64+linux/arm64) в один образ
+Без реестра — либо собрать архив в `/tmp` (OCI layout, грузится через `docker load`):
 ```bash
-git clone <репо> && cd polymarket
-docker build -t polymarket-hft:latest .   # или docker compose build
-docker compose up -d
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --output type=docker,dest=/tmp/polymarket-hft.tar .
+```
+Когда появится аккаунт регистра — пуш как обычно:
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t docker.io/<username>/polymarket-hft:latest --push .
 ```
 
 ---
 
-### Параметры (опционально)
+## Проверка после запуска
+
+```bash
+docker logs -f polymarket-hft                     # логи движка/фида/дашборда
+curl -s http://localhost:8080/api/status          # (mode=PAPER, btc_price, has_live_market)
+# дашборд: http://<SERVER>:3000
+```
+
+Ожидается в `/api/status`: `"mode":"PAPER"`, живой `btc_price` (Binance), и после того как
+сойдёт внешний сетевой блок на Polymarket — `has_live_market:1`, а `market_slug` =
+открытое 5-мин окно `btc-updown-5m-<epoch>`.
+
+---
+
+## Параметры (опционально)
 | ENV | default | смысл |
 |---|---|---|
 | `ENGINE_PORT` | `8080` | HTTP-порт движка |
-| `DASH_PORT` | `3000`  | порт дашборда |
-| volume `/app/data` | — | персистентные датасет/логи/статистика |
+| `DASH_PORT`   | `3000` | порт дашборда |
+| volume `/app/data` | — | персистентные датасет/лог/статистика |
 
-> PAPER-режим жёстко залочен (`LIVE_TRADING=true` вызывает FATAL в движке) —
-> настоящие ключи не задействуются и live-торговля не включается в контейнере.
+## Безопасность
+- **Paper-only lock**: `LIVE_TRADING=true` вызывает `[FATAL SAFETY] ... permanently locked`
+  — в контейнере live-торговля не включается, реальные ключи не задействуются.
+- Порт `:8080` в контейнере слушает `0.0.0.0`; наружу маппь только если нужен
+  публичный доступ, лучше за reverse-proxy/HTTPS.

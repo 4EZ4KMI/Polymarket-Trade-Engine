@@ -4,7 +4,10 @@
 #   docker compose logs -f
 services:
   polymarket-hft:
-    image: polymarket-hft:latest         # or docker.io/<user>/polymarket-hft:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: polymarket-hft:latest         # local tag; swap to docker.io/<user>/<repo>:tag when pushing to a registry
     container_name: polymarket-hft
     restart: unless-stopped
     ports:

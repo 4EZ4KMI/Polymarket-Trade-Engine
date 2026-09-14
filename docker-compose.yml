@@ -4,10 +4,9 @@
 #   docker compose logs -f
 services:
   polymarket-hft:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: polymarket-hft:latest         # local tag; swap to docker.io/<user>/<repo>:tag when pushing to a registry
+    # Pull the published multi-arch image from Docker Hub.
+    # (Source-built local image: docker build -t polymarket-hft:latest . ; uses Dockerfile.)
+    image: docker.io/epicoeyfx/polymarket-hft:latest
     container_name: polymarket-hft
     restart: unless-stopped
     ports:
